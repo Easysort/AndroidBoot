@@ -4,28 +4,26 @@
 <meta charset="utf-8"/>
 <title>3 Phones CPU+Battery</title>
 <script>
-const phones = [
+    const phones = [
   {id:"p1", url:"http://100.78.45.34:8787/metrics"},
   {id:"p2", url:"http://100.92.160.36:8787/metrics"},
   {id:"p3", url:"http://192.168.1.103:8787/metrics"}
 ];
-
 async function poll(){
   for(const p of phones){
     try{
-      let r = await fetch(p.url);
-      let m = await r.json();
+      let m = await (await fetch(p.url)).json();
+      let b = m.battery||{};
+      let charging = (b.plugged && b.plugged !== "UNPLUGGED") ? "Yes" : "No";
       document.getElementById(p.id).innerText =
-        "CPU: "+(m.cpu_usage_pct??"?")+"% | " +
-        "Battery: "+(m.battery?.percentage??m.battery?.level??"?")+"% | " +
-        "Temp: "+(m.battery?.temperature_c??"?")+"°C";
-    }catch(e){
-      document.getElementById(p.id).innerText = "offline";
-      console.error(e);
-    }
+        "CPU: "+(m.cpu_usage_pct?.toFixed?.(1) ?? "?")+"% | "+
+        "Battery: "+(b.percentage ?? b.level ?? "?")+"% | "+
+        "Charging: "+charging+" | "+
+        "Temp: "+(b.temperature ?? "?")+"°C";
+    }catch(e){ document.getElementById(p.id).innerText="offline"; }
   }
 }
-setInterval(poll,5000);
+setInterval(poll,5000); poll();
 </script>
 </head>
 <body style="font-family:sans-serif">
@@ -35,3 +33,4 @@ setInterval(poll,5000);
 <div id="p3">Phone 3...</div>
 </body>
 </html>
+
