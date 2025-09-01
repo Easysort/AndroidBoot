@@ -1,59 +1,62 @@
 #!/usr/bin/env python3
-import os, json, time, uuid, subprocess, datetime, requests, pathlib
+import os, json, time, subprocess, logging, requests, pathlib
+from datetime import datetime, UTC
 
+# --- Config (env must be set) ---
 SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
 SUPABASE_KEY = os.environ["SUPABASE_ANON_KEY"]
 BUCKET       = os.environ["SUPABASE_BUCKET"]
 TABLE        = os.environ["SUPABASE_TABLE"]
 
-HEADERS = {
-    "Authorization": f"Bearer {SUPABASE_KEY}",
-    "apikey": SUPABASE_KEY,
-}
+HEADERS = {"Authorization": f"Bearer {SUPABASE_KEY}", "apikey": SUPABASE_KEY}
 TMPDIR  = "/data/data/com.termux/files/home/.cache/phone-metrics"
 pathlib.Path(TMPDIR).mkdir(parents=True, exist_ok=True)
 
-# Stable device id (persisted)
-ID_FILE = "device_id.txt"
+# Stable device id (required)
+ID_FILE = os.path.join(TMPDIR, "device_id.txt")
 if os.path.exists(ID_FILE):
     DEVICE_ID = open(ID_FILE).read().strip()
 else:
-    raise Exception("Device ID file not found")
+    raise RuntimeError(f"Device ID file not found: {ID_FILE}\n"
+                       f"Create one, e.g.:  echo my-phone-id > {ID_FILE}")
+
+# --- Logging ---
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+log = logging.getLogger("uploader")
 
 def termux_battery():
     try:
         out = subprocess.check_output(["termux-battery-status"], text=True)
         b   = json.loads(out)
         pct = b.get("percentage")
-        temp = b.get("temperature")  # already °C in Termux:API
+        temp = b.get("temperature")  # °C
         plugged = b.get("plugged")
-        charging = plugged and plugged != "UNPLUGGED"
+        charging = bool(plugged and plugged != "UNPLUGGED")
         return pct, charging, temp
     except Exception as e:
+        log.warning(f"battery read failed: {e}")
         return None, None, None
 
 def take_photo():
-    ts = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     img_path = os.path.join(TMPDIR, f"photo_{ts}.jpg")
-    # -c 0 tries back camera; use -c 1 for front if needed
     try:
         subprocess.check_call(["termux-camera-photo", "-c", "0", img_path])
-        return img_path
-    except Exception:
-        return None
+        if os.path.exists(img_path) and os.path.getsize(img_path) > 0:
+            return img_path
+    except Exception as e:
+        log.warning(f"camera failed: {e}")
+    return None
 
 def upload_image(img_path):
-    now = datetime.datetime.utcnow()
-    key = f"{DEVICE_ID}/{now:%Y/%m/%d}/{os.path.basename(img_path)}"
+    now = datetime.now(UTC)
+    key = f"{DEVICE_ID}/{now:%Y/%m/%d/%H}/{os.path.basename(img_path)}"
     url = f"{SUPABASE_URL}/storage/v1/object/{BUCKET}/{key}"
     with open(img_path, "rb") as f:
-        r = requests.post(
-            url,
-            headers={**HEADERS, "x-upsert": "true", "Content-Type": "image/jpeg"},
-            data=f.read(),
-        )
+        r = requests.post(url, headers={**HEADERS, "x-upsert": "true", "Content-Type": "image/jpeg"}, data=f.read())
     r.raise_for_status()
-    return f"{SUPABASE_URL}/storage/v1/object/public/{BUCKET}/{key}"
+    public_url = f"{SUPABASE_URL}/storage/v1/object/public/{BUCKET}/{key}"
+    return public_url
 
 def insert_row(ts_iso, pct, charging, temp_c, image_url):
     url = f"{SUPABASE_URL}/rest/v1/{TABLE}"
@@ -69,25 +72,39 @@ def insert_row(ts_iso, pct, charging, temp_c, image_url):
     r.raise_for_status()
 
 def loop():
+    log.info(f"start device_id={DEVICE_ID} bucket={BUCKET} table={TABLE}")
     while True:
-        ts = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc).isoformat()
+        ts = datetime.now(UTC).isoformat()
         pct, charging, temp_c = termux_battery()
-        img_path = take_photo()
+        log.info(f"battery pct={pct} charging={charging} temp_c={temp_c}")
+
         img_url = None
+        img_path = take_photo()
         if img_path:
             try:
+                size = os.path.getsize(img_path)
+                log.info(f"captured {os.path.basename(img_path)} bytes={size}")
                 img_url = upload_image(img_path)
-                # keep last 50 photos locally, delete older
-                photos = sorted([p for p in pathlib.Path(TMPDIR).glob("photo_*.jpg")])
-                for p in photos[:-50]:
-                    p.unlink(missing_ok=True)
+                log.info(f"uploaded -> {img_url}")
             except Exception as e:
-                img_url = None
+                log.error(f"upload failed: {e}")
+            finally:
+                try: os.remove(img_path)
+                except Exception: pass
+            # keep only last 50 local photos (should be none after delete, but in case)
+            photos = sorted([p for p in pathlib.Path(TMPDIR).glob("photo_*.jpg")])
+            for p in photos[:-50]:
+                try: p.unlink(missing_ok=True)
+                except Exception: pass
+        else:
+            log.warning("no image captured")
+
         try:
             insert_row(ts, pct, charging, temp_c, img_url)
+            log.info("row inserted")
         except Exception as e:
-            # Best-effort; on failure we just log and continue
-            print("Insert failed:", e)
+            log.error(f"insert failed: {e}")
+
         time.sleep(60)
 
 if __name__ == "__main__":
