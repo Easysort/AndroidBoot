@@ -21,6 +21,7 @@ async function poll(){
         "Temp: "+(m.battery?.temperature_c??"?")+"°C";
     }catch(e){
       document.getElementById(p.id).innerText = "offline";
+      console.error(e);
     }
   }
 }
