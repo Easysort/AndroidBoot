@@ -6,7 +6,10 @@ SUPABASE_KEY = os.environ["SUPABASE_ANON_KEY"]
 BUCKET       = os.environ["SUPABASE_BUCKET"]
 TABLE        = os.environ["SUPABASE_TABLE"]
 
-HEADERS = {"Authorization": f"Bearer {SUPABASE_KEY}"}
+HEADERS = {
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "apikey": SUPABASE_KEY,
+}
 TMPDIR  = "/data/data/com.termux/files/home/.cache/phone-metrics"
 pathlib.Path(TMPDIR).mkdir(parents=True, exist_ok=True)
 
@@ -40,19 +43,17 @@ def take_photo():
         return None
 
 def upload_image(img_path):
-    # storage object path: <bucket>/<device_id>/<YYYY/MM/DD>/<filename>
     now = datetime.datetime.utcnow()
     key = f"{DEVICE_ID}/{now:%Y/%m/%d}/{os.path.basename(img_path)}"
     url = f"{SUPABASE_URL}/storage/v1/object/{BUCKET}/{key}"
     with open(img_path, "rb") as f:
-        r = requests.post(url, headers=HEADERS, data=f)
-    # If already exists, try upsert
-    if r.status_code == 409:
-        r = requests.put(url, headers=HEADERS, data=open(img_path, "rb"))
+        r = requests.post(
+            url,
+            headers={**HEADERS, "x-upsert": "true", "Content-Type": "image/jpeg"},
+            data=f.read(),
+        )
     r.raise_for_status()
-    # If the bucket is PUBLIC, this is the public URL:
-    public_url = f"{SUPABASE_URL}/storage/v1/object/public/{BUCKET}/{key}"
-    return public_url
+    return f"{SUPABASE_URL}/storage/v1/object/public/{BUCKET}/{key}"
 
 def insert_row(ts_iso, pct, charging, temp_c, image_url):
     url = f"{SUPABASE_URL}/rest/v1/{TABLE}"
