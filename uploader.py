@@ -13,7 +13,7 @@ TMPDIR  = "/data/data/com.termux/files/home/.cache/phone-metrics"
 pathlib.Path(TMPDIR).mkdir(parents=True, exist_ok=True)
 
 # Stable device id (required)
-ID_FILE = os.path.join(TMPDIR, "device_id.txt")
+ID_FILE = "device_id.txt"
 if os.path.exists(ID_FILE):
     DEVICE_ID = open(ID_FILE).read().strip()
 else:
