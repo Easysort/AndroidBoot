@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os, json, time, subprocess, logging, requests, pathlib
 from datetime import datetime, UTC
+import subprocess
 
 # --- Config (env must be set) ---
 SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
@@ -71,9 +72,14 @@ def insert_row(ts_iso, pct, charging, temp_c, image_url):
     r = requests.post(url, headers={**HEADERS, "Content-Type": "application/json", "Prefer":"return=minimal"}, json=row)
     r.raise_for_status()
 
+def keep_alive():
+    subprocess.run(["termux-wake-lock"])
+    subprocess.run(["sshd"])
+
 def loop():
     log.info(f"start device_id={DEVICE_ID} bucket={BUCKET} table={TABLE}")
     while True:
+        keep_alive()
         ts = datetime.now(UTC).isoformat()
         pct, charging, temp_c = termux_battery()
         log.info(f"battery pct={pct} charging={charging} temp_c={temp_c}")
