@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, json, time, subprocess, logging, requests, pathlib
+import os, json, time, subprocess, logging, requests, pathlib, argparse
 from datetime import datetime, UTC
 import subprocess
 
@@ -76,8 +76,8 @@ def keep_alive():
     subprocess.run(["termux-wake-lock"])
     subprocess.run(["sshd"])
 
-def loop():
-    log.info(f"start device_id={DEVICE_ID} bucket={BUCKET} table={TABLE}")
+def loop(sleep_seconds=60):
+    log.info(f"start device_id={DEVICE_ID} bucket={BUCKET} table={TABLE} sleep={sleep_seconds}s")
     while True:
         keep_alive()
         ts = datetime.now(UTC).isoformat()
@@ -111,13 +111,12 @@ def loop():
         except Exception as e:
             log.error(f"insert failed: {e}")
 
-        left = 60
-        while True:
-            time.sleep(1)
-            left -= 1
-            print(f"left: {left}")
-            if left <= 0:
-                break
+        time.sleep(sleep_seconds)
 
 if __name__ == "__main__":
-    loop()
+    parser = argparse.ArgumentParser(description="Phone metrics uploader")
+    parser.add_argument("--sleep", "-s", type=int, default=60, 
+                       help="Sleep duration in seconds between uploads (default: 60)")
+    args = parser.parse_args()
+    
+    loop(args.sleep)
