@@ -111,7 +111,13 @@ def loop():
         except Exception as e:
             log.error(f"insert failed: {e}")
 
-        time.sleep(60)
+        left = 60
+        while True:
+            time.sleep(1)
+            left -= 1
+            print(f"left: {left}")
+            if left <= 0:
+                break
 
 if __name__ == "__main__":
     loop()
