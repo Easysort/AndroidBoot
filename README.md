@@ -14,3 +14,9 @@ pkg update
 pkg install golang termux-api
 ./api
 ```
+
+# Rooting a Oneplus Nord 5G
+
+(Only works on Windows for now, sorry)
+
+
