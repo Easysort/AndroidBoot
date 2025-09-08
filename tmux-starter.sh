@@ -12,7 +12,7 @@ mkdir -p "$LOG_DIR"
 
 # Session 1: metrics API (auto-restart loop)
 if ! tmux has-session -t metrics 2>/dev/null; then
-  tmux new-session -d -s metrics "while :; do ./metrics-api >>'$LOG_DIR/metrics-api.log' 2>&1; echo 'metrics-api crashed, restarting in 2s' >>'$LOG_DIR/metrics-api.log'; sleep 2; done"
+  tmux new-session -d -s metrics "while :; do ./api/metrics-api >>'$LOG_DIR/metrics-api.log' 2>&1; echo 'metrics-api crashed, restarting in 2s' >>'$LOG_DIR/metrics-api.log'; sleep 2; done"
 fi
 
 # Session 2: uploader

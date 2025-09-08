@@ -7,6 +7,9 @@ source "./phone.env"
 pkg up -y
 pkg i -y tmux openssh golang python jq curl tsu procps termux-api git coreutils inetutils vim
 
+# Install Python dependencies for uploader.py
+pip install requests
+
 # Termux permissions & wake
 termux-wake-lock || true
 termux-notification --title "Phone metrics" --content "Installing dependencies..." || true
