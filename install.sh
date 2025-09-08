@@ -11,10 +11,10 @@ pkg i -y tmux openssh golang python jq curl tsu procps termux-api git coreutils 
 termux-wake-lock || true
 termux-notification --title "Phone metrics" --content "Installing dependencies..." || true
 
-# Build Go API
-export GO111MODULE=on
-go version
-go build -o metrics-api ./main.go
+# # Build Go API
+# export GO111MODULE=on
+# go version
+# go build -o metrics-api ./main.go
 
 # Create dirs
 mkdir -p "$STATE_DIR" "$LOG_DIR" "$ERROR_DIR" "$SENT_ERROR_DIR" "$TMPDIR"
