@@ -5,7 +5,7 @@ set -euo pipefail
 source "./phone.env"
 
 pkg up -y
-pkg i -y tmux openssh golang python jq curl tsu procps termux-api git coreutils inetutils
+pkg i -y tmux openssh golang python jq curl tsu procps termux-api git coreutils inetutils vim
 
 # Termux permissions & wake
 termux-wake-lock || true
@@ -39,6 +39,6 @@ echo " - Disable battery optimizations for Termux."
 # fi
 
 # # Make scripts executable
-chmod +x watchdog.sh uploader.py start_tmux.sh
+chmod +x watchdog.sh uploader.py tmux-starter.sh
 
 echo "Install done."
