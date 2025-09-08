@@ -2,6 +2,9 @@
 import os, json, time, subprocess, logging, requests, pathlib, argparse, shutil
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # --- Config (env must be set) ---
 SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
