@@ -144,5 +144,5 @@ while :; do
   ensure_sshd
   ensure_tailscale
   ensure_network_role
-  sleep "${CHECK_INTERVAL}"
+  sleep "$CHECK_INTERVAL"
 done
