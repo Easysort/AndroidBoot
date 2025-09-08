@@ -1,11 +1,11 @@
 #!/data/data/com.termux/files/usr/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")"
-source "./phone.env"
+source "./.env"
 
 # export ENV for children
 set -a
-source ./phone.env
+source ./.env
 set +a
 
 mkdir -p "$LOG_DIR"
