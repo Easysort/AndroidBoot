@@ -17,7 +17,7 @@ fi
 
 # Session 2: uploader
 if ! tmux has-session -t uploader 2>/dev/null; then
-  tmux new-session -d -s uploader "while :; do ./uploader.py -s ${CHECK_INTERVAL} -c ${CAMERA_ID} >>'$LOG_DIR/uploader.log' 2>&1; echo 'uploader crashed, restarting in 5s' >>'$LOG_DIR/uploader.log'; sleep 5; done"
+  tmux new-session -d -s uploader "while :; do python uploader.py -s ${CHECK_INTERVAL} -c ${CAMERA_ID} >>'$LOG_DIR/uploader.log' 2>&1; echo 'uploader crashed, restarting in 5s' >>'$LOG_DIR/uploader.log'; sleep 5; done"
 fi
 
 # Session 3: watchdog
