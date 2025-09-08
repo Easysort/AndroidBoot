@@ -33,12 +33,12 @@ echo " - Install Termux:API and Termux:Boot apps from F-Droid."
 echo " - Grant camera, location, storage permissions to Termux."
 echo " - Disable battery optimizations for Termux."
 
-# Tailscale install (static script; works on aarch64)
-if ! command -v tailscale >/dev/null 2>&1; then
-  curl -fsSL https://tailscale.com/install.sh | sh
-fi
+# # Tailscale install (static script; works on aarch64)
+# if ! command -v tailscale >/dev/null 2>&1; then
+#   curl -fsSL https://tailscale.com/install.sh | sh
+# fi
 
-# Make scripts executable
-chmod +x watchdog.sh uploader.py start_tmux.sh
+# # Make scripts executable
+# chmod +x watchdog.sh uploader.py start_tmux.sh
 
 echo "Install done."
