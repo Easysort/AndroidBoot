@@ -39,6 +39,6 @@ echo " - Disable battery optimizations for Termux."
 # fi
 
 # # Make scripts executable
-# chmod +x watchdog.sh uploader.py start_tmux.sh
+chmod +x watchdog.sh uploader.py start_tmux.sh
 
 echo "Install done."
