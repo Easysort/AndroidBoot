@@ -1,4 +1,8 @@
 #!/data/data/com.termux/files/usr/bin/bash
+
+termux-notification --id 42042 --title "Phone Watchdog" --content "running" --ongoing || true
+termux-wake-lock || true
+
 set -euo pipefail
 cd "$(dirname "$0")"
 source "./.env"
