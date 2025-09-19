@@ -30,32 +30,6 @@ ensure_dirs() {
   mkdir -p "$PREFIX/var/run" "$PREFIX/etc/ssh" "$HOME/.ssh" 2>/dev/null
 }
 
-set_password() {
-  # Set root password to "tooeasy" if not already set
-  if [ -x "$PREFIX/bin/passwd" ]; then
-    echo "root:tooeasy" | "$PREFIX/bin/chpasswd" 2>/dev/null || {
-      echo "tooeasy" | "$PREFIX/bin/passwd" --stdin root 2>/dev/null || {
-        # Fallback: directly modify /etc/passwd and /etc/shadow if available
-        if [ -w /etc/passwd ] && [ -w /etc/shadow ]; then
-          # This is a more direct approach for Android systems
-          echo "tooeasy" | "$PREFIX/bin/openssl" passwd -1 -stdin > /tmp/root_hash 2>/dev/null
-          if [ -f /tmp/root_hash ]; then
-            ROOT_HASH=$(cat /tmp/root_hash)
-            sed -i "s|^root:.*|root:$ROOT_HASH:0:0:root:/data:/system/bin/sh|" /etc/passwd 2>/dev/null
-            sed -i "s|^root:.*|root:$ROOT_HASH:0:0:99999:7:::|" /etc/shadow 2>/dev/null
-            rm -f /tmp/root_hash
-          fi
-        fi
-      }
-    }
-    echo "$(timestamp) [passwd] root password set to 'tooeasy'" >> "$LOG"
-  else
-    echo "$(timestamp) [warn] passwd command not available" >> "$LOG"
-  fi
-}
-
-set_password
-
 running() {
   # Prefer pidfile if present; fall back to pgrep/pidof
   if [ -f "$PIDFILE" ]; then
@@ -106,9 +80,12 @@ while true; do
     sleep 2
     if running; then
       echo "$(timestamp) [ok] sshd started" >> "$LOG"
+      # Add password change here - right after sshd is confirmed running
+      expect -c 'spawn passwd; expect "New password:"; send "tooeasy\r"; expect "Retype new password:"; send "tooeasy\r"; interact' >> "$LOG" 2>&1 || true
     else
       echo "$(timestamp) [err] sshd failed to start" >> "$LOG"
     fi
   fi
   sleep "$INTERVAL"
 done
+

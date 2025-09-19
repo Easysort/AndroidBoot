@@ -5,7 +5,7 @@ set -euo pipefail
 source "./phone.env"
 
 pkg up -y
-pkg i -y tmux openssh golang python jq curl tsu procps termux-api git coreutils inetutils vim
+pkg i -y tmux openssh golang python jq curl tsu procps termux-api git coreutils inetutils vim expect
 
 # Install Python dependencies for uploader.py
 pip install requests python-dotenv
@@ -44,9 +44,14 @@ echo " - Disable battery optimizations for Termux."
 # # Make scripts executable
 chmod +x watchdog.sh uploader.py tmux-starter.sh 98-sshd-keepalive.sh
 
-su
-mv 98-sshd-keepalive.sh /data/adb/service.d/sshd-keepalive.sh
-chmod 755 /data/adb/service.d/sshd-keepalive.sh
-exit
+# Install Magisk service script (requires root)
+echo "Installing Magisk service script (requires root)..."
+su -c "mv 98-sshd-keepalive.sh /data/adb/service.d/sshd-keepalive.sh && chmod 755 /data/adb/service.d/sshd-keepalive.sh" || {
+  echo "Failed to install Magisk service script. You may need to run this manually:"
+  echo "  su"
+  echo "  mv 98-sshd-keepalive.sh /data/adb/service.d/sshd-keepalive.sh"
+  echo "  chmod 755 /data/adb/service.d/sshd-keepalive.sh"
+  echo "  exit"
+}
 
 echo "Install done."
