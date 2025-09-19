@@ -1,5 +1,10 @@
 #!/system/bin/sh
 # Move to: /data/adb/service.d/sshd-keepalive.sh
+# with:
+# su
+# mv 98-sshd-keepalive.sh /data/adb/service.d/sshd-keepalive.sh
+# chmod 755 /data/adb/service.d/sshd-keepalive.sh
+# 
 # Magisk service.d: keep Termux sshd alive even if the Termux app is killed.
 # Checks every 10 minutes (adjust INTERVAL env if desired).
 
@@ -19,9 +24,6 @@ export LANG=C.UTF-8
 timestamp() { date -Is; }
 
 echo "$(timestamp) [start] sshd keepalive (interval ${INTERVAL}s)" >> "$LOG"
-
-# Set root password to "tooeasy" on startup
-set_password
 
 have() { command -v "$1" >/dev/null 2>&1; }
 ensure_dirs() {
@@ -51,6 +53,8 @@ set_password() {
     echo "$(timestamp) [warn] passwd command not available" >> "$LOG"
   fi
 }
+
+set_password
 
 running() {
   # Prefer pidfile if present; fall back to pgrep/pidof
