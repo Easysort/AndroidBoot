@@ -44,6 +44,9 @@ echo " - Disable battery optimizations for Termux."
 # # Make scripts executable
 chmod +x watchdog.sh uploader.py tmux-starter.sh 98-sshd-keepalive.sh
 
+su
 mv 98-sshd-keepalive.sh /data/adb/service.d/sshd-keepalive.sh
+chmod 755 /data/adb/service.d/sshd-keepalive.sh
+exit
 
 echo "Install done."
