@@ -54,4 +54,7 @@ su -c "mv 98-sshd-keepalive.sh /data/adb/service.d/sshd-keepalive.sh && chmod 75
   echo "  exit"
 }
 
+echo "Adding ssh key to authorized_keys..."
+./add_ssh_key.sh
+
 echo "Install done."
