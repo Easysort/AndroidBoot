@@ -1,1 +1,1 @@
-termux-job-scheduler --job-id 700 --script "$HOME/AndroidBoot/tmux-starter.sh" --period-ms 900000 --persisted true --network any --battery-not-low false\
+termux-job-scheduler --job-id 700 --script "$HOME/AndroidBoot/tmux-starter.sh" --period-ms 900000 --persisted true --network any --battery-not-low false
