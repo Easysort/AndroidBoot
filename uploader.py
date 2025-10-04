@@ -27,6 +27,7 @@ SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
 SUPABASE_KEY = os.environ["SUPABASE_ANON_KEY"]
 BUCKET       = os.environ["SUPABASE_BUCKET"]
 TABLE        = os.environ.get("SUPABASE_TABLE", "phone_metrics")
+NIGHT_TIME_SLEEP_SECONDS = os.environ.get("NIGHT_TIME_SLEEP_SECONDS", 60 * 15) # 15 minutes
 
 HEADERS = {"Authorization": f"Bearer {SUPABASE_KEY}", "apikey": SUPABASE_KEY}
 
@@ -363,10 +364,14 @@ def keep_alive():
     subprocess.run(["termux-wake-lock"])
     subprocess.run(["sshd"])
 
+def is_night_time():
+    now = datetime.now(UTC)
+    return now.hour >= 17 or now.hour <= 6
+
 # ----------------- Main loop -----------------
 
-def loop(sleep_seconds=60, camera_id="0"):
-    log.info(f"start device_id={DEVICE_ID} table={TABLE} bucket={BUCKET} sleep={sleep_seconds}s")
+def loop(sleep_seconds=60, night_time_sleep_seconds=900, camera_id="0"):
+    log.info(f"start device_id={DEVICE_ID} table={TABLE} bucket={BUCKET} sleep={sleep_seconds}s night_time_sleep={night_time_sleep_seconds}")
     while True:
         keep_alive()
 
@@ -422,7 +427,10 @@ def loop(sleep_seconds=60, camera_id="0"):
         except Exception as e:
             log.error(f"insert failed: {e}")
 
-        time.sleep(sleep_seconds)
+        if is_night_time():
+            time.sleep(night_time_sleep_seconds)
+        else:
+            time.sleep(sleep_seconds)
 
 # ----------------- CLI -----------------
 
@@ -430,7 +438,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Phone metrics uploader (Python-only)")
     parser.add_argument("--sleep", "-s", type=int, default=int(os.environ.get("CHECK_INTERVAL","60")),
                        help="Sleep duration in seconds between uploads (default: 60)")
+    parser.add_argument("--night_time_sleep", "-n", type=int, default=NIGHT_TIME_SLEEP_SECONDS,
+                       help="Sleep duration in seconds between uploads during night time (17-7) (default: 15 minutes)")
     parser.add_argument("--camera", "-c", default=os.environ.get("CAMERA_ID","0"),
                        help="Camera id for termux-camera-photo (default: 0)")
     args = parser.parse_args()
-    loop(args.sleep, args.camera)
+    loop(args.sleep, args.night_time_sleep, args.camera)
