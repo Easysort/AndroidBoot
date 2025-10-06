@@ -362,7 +362,8 @@ def insert_row(payload: Dict[str, Any]) -> None:
 
 def keep_alive():
     subprocess.run(["termux-wake-lock"])
-    subprocess.run(["sshd"])
+    # Use the same SSH config as the Magisk service to ensure consistent behavior
+    subprocess.run(["/data/data/com.termux/files/usr/bin/sshd", "-f", "/data/data/com.termux/files/usr/etc/ssh/sshd_config"])
 
 def is_night_time():
     now = datetime.now(UTC)

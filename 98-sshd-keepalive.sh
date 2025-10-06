@@ -50,7 +50,9 @@ start_sshd() {
 Port 8022
 Protocol 2
 PermitRootLogin no
-PasswordAuthentication yes
+PasswordAuthentication no
+PubkeyAuthentication yes
+AuthorizedKeysFile .ssh/authorized_keys
 Subsystem sftp /data/data/com.termux/files/usr/libexec/sftp-server
 PidFile /data/data/com.termux/files/usr/var/run/sshd-magisk.pid
 UsePAM no
@@ -80,8 +82,7 @@ while true; do
     sleep 2
     if running; then
       echo "$(timestamp) [ok] sshd started" >> "$LOG"
-      # Add password change here - right after sshd is confirmed running
-      expect -c 'spawn passwd; expect "New password:"; send "tooeasy\r"; expect "Retype new password:"; send "tooeasy\r"; interact' >> "$LOG" 2>&1 || true
+      # SSH key authentication only - no password needed
     else
       echo "$(timestamp) [err] sshd failed to start" >> "$LOG"
     fi

@@ -20,9 +20,12 @@ has_cmd(){ command -v "$1" >/dev/null 2>&1 ; }
 ensure_sshd() {
   if ! pgrep -x sshd >/dev/null 2>&1; then
     log "Starting sshd..."
-    nohup sshd >/dev/null 2>&1 || true
+    # Use the same config as the Magisk service to ensure consistent behavior
+    PREFIX="/data/data/com.termux/files/usr"
+    HOME="/data/data/com.termux/files/home"
+    nohup "$PREFIX/bin/sshd" -f "$PREFIX/etc/ssh/sshd_config" >/dev/null 2>&1 || true
     sleep 1
-    if ! pgrep -x sshd >/devnull 2>&1; then
+    if ! pgrep -x sshd >/dev/null 2>&1; then
       jerr "sshd" "failed to start sshd"
     else
       log "sshd OK"
