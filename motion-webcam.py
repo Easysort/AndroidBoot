@@ -2,17 +2,16 @@
 # -*- coding: utf-8 -*-
 
 """
-Lightweight motion detection webcam server for Android/Termux
+Ultra-lightweight motion detection webcam server for Android/Termux
 - Hosts a simple webpage showing live camera feed
-- Detects motion using frame differencing (very fast)
+- Detects motion using simple pixel differencing (very fast)
 - Saves images when motion is detected
+- Uses only PIL/Pillow - no OpenCV needed
 - Runs every second with minimal CPU usage
 """
 
 import os
 import time
-import cv2
-import numpy as np
 import threading
 import base64
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -20,11 +19,13 @@ from datetime import datetime
 import json
 import subprocess
 from pathlib import Path
+from PIL import Image, ImageChops, ImageStat
+import io
 
 # Configuration
 CAMERA_ID = os.environ.get("CAMERA_ID", "0")
-MOTION_THRESHOLD = 30  # Lower = more sensitive
-MIN_MOTION_AREA = 500  # Minimum area to consider as motion
+MOTION_THRESHOLD = 20  # Lower = more sensitive (0-255)
+MOTION_PIXEL_THRESHOLD = 50  # Minimum number of changed pixels
 SAVE_DIR = "motion_captures"
 PORT = 8080
 
@@ -36,10 +37,9 @@ motion_count = 0
 
 class MotionDetector:
     def __init__(self):
-        self.cap = None
         self.last_frame = None
         self.motion_threshold = MOTION_THRESHOLD
-        self.min_area = MIN_MOTION_AREA
+        self.pixel_threshold = MOTION_PIXEL_THRESHOLD
         
     def init_camera(self):
         """Initialize camera using termux-camera-photo"""
@@ -68,41 +68,36 @@ class MotionDetector:
             ], capture_output=True, timeout=3)
             
             if result.returncode == 0 and os.path.exists(temp_path):
-                frame = cv2.imread(temp_path)
+                # Load with PIL
+                image = Image.open(temp_path)
                 os.remove(temp_path)
-                return frame
+                return image
         except Exception as e:
             print(f"Frame capture failed: {e}")
         return None
     
     def detect_motion(self, frame):
-        """Detect motion using simple frame differencing"""
+        """Detect motion using simple pixel differencing with PIL"""
         if frame is None:
             return False, None
         
-        # Convert to grayscale
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, (21, 21), 0)
+        # Convert to grayscale and resize for faster processing
+        gray = frame.convert('L').resize((320, 240))
         
         if self.last_frame is None:
             self.last_frame = gray
             return False, frame
         
         # Compute difference
-        frame_delta = cv2.absdiff(self.last_frame, gray)
-        thresh = cv2.threshold(frame_delta, self.motion_threshold, 255, cv2.THRESH_BINARY)[1]
+        diff = ImageChops.difference(self.last_frame, gray)
         
-        # Dilate to fill holes
-        thresh = cv2.dilate(thresh, None, iterations=2)
+        # Convert to numpy-like array for thresholding
+        diff_array = list(diff.getdata())
         
-        # Find contours
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Count pixels above threshold
+        changed_pixels = sum(1 for pixel in diff_array if pixel > self.motion_threshold)
         
-        motion_detected = False
-        for contour in contours:
-            if cv2.contourArea(contour) > self.min_area:
-                motion_detected = True
-                break
+        motion_detected = changed_pixels > self.pixel_threshold
         
         # Update last frame
         self.last_frame = gray
@@ -255,11 +250,21 @@ class WebcamHandler(BaseHTTPRequestHandler):
                 self.wfile.write(img_data)
             else:
                 # Send placeholder image
-                placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
-                cv2.putText(placeholder, "No Camera Feed", (200, 240), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-                _, buffer = cv2.imencode('.jpg', placeholder)
-                self.wfile.write(buffer.tobytes())
+                placeholder = Image.new('RGB', (640, 480), color='black')
+                # Add text using PIL
+                from PIL import ImageDraw, ImageFont
+                draw = ImageDraw.Draw(placeholder)
+                try:
+                    # Try to use a default font
+                    font = ImageFont.load_default()
+                except:
+                    font = None
+                draw.text((200, 240), "No Camera Feed", fill='white', font=font)
+                
+                # Convert to bytes
+                img_io = io.BytesIO()
+                placeholder.save(img_io, format='JPEG', quality=85)
+                self.wfile.write(img_io.getvalue())
                 
         elif self.path == '/status':
             self.send_response(200)
@@ -308,15 +313,16 @@ def motion_worker():
             motion_detected = motion
             
             # Convert frame to base64 for web display
-            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-            current_frame_b64 = base64.b64encode(buffer).decode()
+            img_io = io.BytesIO()
+            frame.save(img_io, format='JPEG', quality=85)
+            current_frame_b64 = base64.b64encode(img_io.getvalue()).decode()
             
             # Save image if motion detected
             if motion:
                 motion_count += 1
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 filename = f"{SAVE_DIR}/motion_{timestamp}_{motion_count:04d}.jpg"
-                cv2.imwrite(filename, frame)
+                frame.save(filename, 'JPEG', quality=95)
                 print(f"📸 Motion detected! Saved: {filename}")
             
             time.sleep(1)  # Check every second
