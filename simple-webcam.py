@@ -84,7 +84,7 @@ class SimpleMotionDetector:
         """Capture frame using termux-camera-photo"""
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
-            temp_path = f"/tmp/frame_{timestamp}.jpg"
+            temp_path = f"tmp/frame_{timestamp}.jpg"
             
             result = subprocess.run([
                 "termux-camera-photo", "-c", str(CAMERA_ID), temp_path
