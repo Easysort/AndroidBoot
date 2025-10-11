@@ -42,17 +42,7 @@ class SimpleMotionDetector:
         global CAMERA_ID
         print(f"🔍 Testing camera ID: {CAMERA_ID}")
         
-        # First check if termux-camera-photo exists
-        try:
-            result = subprocess.run(["which", "termux-camera-photo"], capture_output=True)
-            if result.returncode != 0:
-                print("❌ termux-camera-photo not found. Install Termux:API")
-                return False
-        except Exception as e:
-            print(f"❌ Error checking termux-camera-photo: {e}")
-            return False
-        
-        # Try different camera IDs if the default doesn't work
+        # Try different camera IDs to find one that works
         camera_ids_to_try = [str(CAMERA_ID), "0", "1", "2"]
         
         for cam_id in camera_ids_to_try:
@@ -87,7 +77,7 @@ class SimpleMotionDetector:
         print("Troubleshooting:")
         print("1. Make sure Termux:API is installed")
         print("2. Grant camera permission to Termux")
-        print("3. Try running: python test-camera.py")
+        print("3. Try manually: termux-camera-photo -c 0 test.jpg")
         return False
     
     def capture_frame(self):
