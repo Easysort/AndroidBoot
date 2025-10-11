@@ -39,18 +39,55 @@ class SimpleMotionDetector:
         
     def init_camera(self):
         """Initialize camera using termux-camera-photo"""
+        print(f"🔍 Testing camera ID: {CAMERA_ID}")
+        
+        # First check if termux-camera-photo exists
         try:
-            # Test if camera works
-            test_path = "/tmp/test_cam.jpg"
-            result = subprocess.run([
-                "termux-camera-photo", "-c", str(CAMERA_ID), test_path
-            ], capture_output=True, timeout=5)
-            
-            if result.returncode == 0 and os.path.exists(test_path):
-                os.remove(test_path)
-                return True
+            result = subprocess.run(["which", "termux-camera-photo"], capture_output=True)
+            if result.returncode != 0:
+                print("❌ termux-camera-photo not found. Install Termux:API")
+                return False
         except Exception as e:
-            print(f"Camera test failed: {e}")
+            print(f"❌ Error checking termux-camera-photo: {e}")
+            return False
+        
+        # Try different camera IDs if the default doesn't work
+        camera_ids_to_try = [str(CAMERA_ID), "0", "1", "2"]
+        
+        for cam_id in camera_ids_to_try:
+            try:
+                print(f"🔍 Testing camera ID: {cam_id}")
+                test_path = f"/tmp/test_cam_{cam_id}.jpg"
+                
+                result = subprocess.run([
+                    "termux-camera-photo", "-c", cam_id, test_path
+                ], capture_output=True, text=True, timeout=10)
+                
+                print(f"Return code: {result.returncode}")
+                if result.stderr:
+                    print(f"Stderr: {result.stderr}")
+                
+                if result.returncode == 0 and os.path.exists(test_path):
+                    file_size = os.path.getsize(test_path)
+                    print(f"✅ Camera {cam_id} works! File size: {file_size} bytes")
+                    os.remove(test_path)
+                    # Update the global camera ID
+                    global CAMERA_ID
+                    CAMERA_ID = cam_id
+                    return True
+                else:
+                    print(f"❌ Camera {cam_id} failed")
+                    
+            except subprocess.TimeoutExpired:
+                print(f"❌ Camera {cam_id} timed out")
+            except Exception as e:
+                print(f"❌ Camera {cam_id} error: {e}")
+        
+        print("❌ No working camera found")
+        print("Troubleshooting:")
+        print("1. Make sure Termux:API is installed")
+        print("2. Grant camera permission to Termux")
+        print("3. Try running: python test-camera.py")
         return False
     
     def capture_frame(self):
