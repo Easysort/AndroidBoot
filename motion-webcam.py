@@ -45,7 +45,7 @@ class MotionDetector:
         """Initialize camera using termux-camera-photo"""
         try:
             # Test if camera works
-            test_path = "/tmp/test_cam.jpg"
+            test_path = "tmp/test_cam.jpg"
             result = subprocess.run([
                 "termux-camera-photo", "-c", str(CAMERA_ID), test_path
             ], capture_output=True, timeout=5)
@@ -61,7 +61,7 @@ class MotionDetector:
         """Capture frame using termux-camera-photo"""
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
-            temp_path = f"/tmp/frame_{timestamp}.jpg"
+            temp_path = f"tmp/frame_{timestamp}.jpg"
             
             result = subprocess.run([
                 "termux-camera-photo", "-c", str(CAMERA_ID), temp_path
