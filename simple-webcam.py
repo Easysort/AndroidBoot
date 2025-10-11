@@ -39,6 +39,7 @@ class SimpleMotionDetector:
         
     def init_camera(self):
         """Initialize camera using termux-camera-photo"""
+        global CAMERA_ID
         print(f"🔍 Testing camera ID: {CAMERA_ID}")
         
         # First check if termux-camera-photo exists
@@ -72,7 +73,6 @@ class SimpleMotionDetector:
                     print(f"✅ Camera {cam_id} works! File size: {file_size} bytes")
                     os.remove(test_path)
                     # Update the global camera ID
-                    global CAMERA_ID
                     CAMERA_ID = cam_id
                     return True
                 else:
