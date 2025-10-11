@@ -48,7 +48,7 @@ class SimpleMotionDetector:
         for cam_id in camera_ids_to_try:
             try:
                 print(f"🔍 Testing camera ID: {cam_id}")
-                test_path = f"/tmp/test_cam_{cam_id}.jpg"
+                test_path = f"tmp/test_cam_{cam_id}.jpg"
                 
                 result = subprocess.run([
                     "termux-camera-photo", "-c", cam_id, test_path
