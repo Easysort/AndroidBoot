@@ -30,7 +30,7 @@ from pathlib import Path
 
 CAMERA_ID = os.environ.get("CAMERA_ID", "0")
 CAPTURE_INTERVAL_SEC = int(os.environ.get("CAPTURE_INTERVAL_SEC", "1"))
-MOTION_SIZE_THRESHOLD = int(os.environ.get("MOTION_SIZE_THRESHOLD", "50000"))
+MOTION_SIZE_THRESHOLD = int(os.environ.get("MOTION_SIZE_THRESHOLD", "120000"))
 PORT = int(os.environ.get("PORT", "8080"))
 
 BASE_DIR = Path(os.environ.get("CAPTURE_DIR", ".")).resolve()
