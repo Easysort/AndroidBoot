@@ -255,5 +255,47 @@ func main() {
 		}
 		json.NewEncoder(w).Encode(metrics())
 	})
+    http.HandleFunc("/photo", func(w http.ResponseWriter, r *http.Request) {
+        w.Header().Set("Access-Control-Allow-Origin", "*")
+        if r.Method == http.MethodOptions {
+            w.WriteHeader(http.StatusNoContent)
+            return
+        }
+        if r.Method != http.MethodGet {
+            w.Header().Set("Content-Type", "application/json")
+            http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+            return
+        }
+
+        // create temp file path for the captured photo
+        tmp, err := os.CreateTemp("", "photo-*.jpg")
+        if err != nil {
+            w.Header().Set("Content-Type", "application/json")
+            http.Error(w, `{"error":"failed to create temp file"}`, http.StatusInternalServerError)
+            return
+        }
+        tmpPath := tmp.Name()
+        _ = tmp.Close()
+        defer os.Remove(tmpPath)
+
+        // capture using termux-api
+        if _, err := execOut("termux-camera-photo", tmpPath); err != nil {
+            w.Header().Set("Content-Type", "application/json")
+            http.Error(w, `{"error":"failed to capture photo. ensure termux-api is installed and camera permission granted"}`, http.StatusInternalServerError)
+            return
+        }
+
+        // read and return the image
+        b, err := os.ReadFile(tmpPath)
+        if err != nil {
+            w.Header().Set("Content-Type", "application/json")
+            http.Error(w, `{"error":"failed to read captured image"}`, http.StatusInternalServerError)
+            return
+        }
+        w.Header().Set("Cache-Control", "no-store")
+        w.Header().Set("Content-Type", "image/jpeg")
+        w.WriteHeader(http.StatusOK)
+        _, _ = w.Write(b)
+    })
 	_ = http.ListenAndServe(":"+port, nil)
 }
