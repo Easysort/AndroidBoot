@@ -24,7 +24,7 @@ import subprocess
 import threading
 import shutil
 from datetime import datetime
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 
 
@@ -123,12 +123,96 @@ def motion_capture_loop() -> None:
         time.sleep(CAPTURE_INTERVAL_SEC)
 
 
+class GridHandler(SimpleHTTPRequestHandler):
+    """Ultra-light handler that serves:
+    - "/" : landing page with two links (motion, non-motion)
+    - "/grid?type=motion|non" : 6-col grid of images from selected folder
+    - Static files via parent handler (so images are served automatically)
+    """
+
+    def _send_html(self, html: str) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(html.encode("utf-8"))
+
+    def do_GET(self):  # type: ignore[override]
+        if self.path == "/" or self.path.startswith("/index.html"):
+            html = (
+                "<!doctype html><meta charset='utf-8'>"
+                "<title>Capture Browser</title>"
+                "<style>body{font:16px system-ui;margin:16px;background:#111;color:#eee}"
+                "a{color:#7fd} .card{margin:12px 0;padding:12px;background:#181818;border-radius:8px}"
+                "</style>"
+                "<h2>Images</h2>"
+                "<div class='card'><a href='/grid?type=motion'>View motion images</a></div>"
+                "<div class='card'><a href='/grid?type=non'>View non-motion images</a></div>"
+            )
+            return self._send_html(html)
+
+        if self.path.startswith("/grid"):
+            # Parse query
+            q = ""
+            if "?" in self.path:
+                q = self.path.split("?", 1)[1]
+            params = {k: v for k, v in (p.split("=", 1) if "=" in p else (p, "") for p in q.split("&") if p)}
+            which = params.get("type", "motion")
+            folder = MOTION_DIR if which == "motion" else NON_MOTION_DIR
+
+            # Collect images (newest first), limit for snappy load
+            files = []
+            try:
+                for p in folder.iterdir():
+                    if p.suffix.lower() in (".jpg", ".jpeg", ".png"):
+                        files.append(p)
+            except FileNotFoundError:
+                files = []
+            files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            files = files[:600]  # cap to avoid huge pages
+
+            # Build grid
+            rows = []
+            row = []
+            for i, p in enumerate(files, 1):
+                rel = os.path.relpath(p, BASE_DIR).replace("\\", "/")
+                cell = f"<div class='cell'><img loading='lazy' src='/{rel}'></div>"
+                row.append(cell)
+                if i % 6 == 0:
+                    rows.append("<div class='row'>" + "".join(row) + "</div>")
+                    row = []
+            if row:
+                rows.append("<div class='row'>" + "".join(row) + "</div>")
+
+            html = (
+                "<!doctype html><meta charset='utf-8'>"
+                f"<title>{'Motion' if which=='motion' else 'Non-motion'} images</title>"
+                "<style>body{font:16px system-ui;margin:8px;background:#111;color:#eee}"
+                ".top{display:flex;gap:8px;align-items:center;margin:8px}"
+                "a{color:#7fd} .btn{padding:6px 10px;background:#181818;border-radius:6px;display:inline-block}"
+                ".grid{display:flex;flex-direction:column;gap:8px} .row{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}"
+                ".cell{background:#181818;border-radius:6px;padding:4px} .cell img{max-width:100%;height:auto;display:block;border-radius:4px}"
+                "</style>"
+                "<div class='top'>"
+                "<a class='btn' href='/'>Home</a>"
+                "<a class='btn' href='/grid?type=motion'>Motion</a>"
+                "<a class='btn' href='/grid?type=non'>Non-motion</a>"
+                "</div>"
+                "<div class='grid'>"
+                + "".join(rows) +
+                "</div>"
+            )
+            return self._send_html(html)
+
+        # Fallback to static serving for files
+        return super().do_GET()
+
+
 def serve_files() -> None:
-    """Serve the current directory so you can browse images in a browser."""
     os.chdir(str(BASE_DIR))
-    httpd = ThreadingHTTPServer(("0.0.0.0", PORT), SimpleHTTPRequestHandler)
+    httpd = ThreadingHTTPServer(("0.0.0.0", PORT), GridHandler)
     print(f"Web server: http://0.0.0.0:{PORT}")
-    print("Open the 'motion/' and 'non-motion/' folders in your browser.")
+    print("Open / to choose 'motion' or 'non-motion', then browse the grid.")
     httpd.serve_forever()
 
 
