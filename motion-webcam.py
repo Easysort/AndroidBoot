@@ -17,6 +17,7 @@ Environment overrides (optional):
 - PORT (default "8080")
 - CAPTURE_DIR (default current directory)
 - BASELINE_WINDOW_N (default "10") size of rolling window for baseline
+- SERVER_ONLY (default "0"): if "1", only run the web server/grid
 """
 
 import os
@@ -34,6 +35,7 @@ CAMERA_ID = os.environ.get("CAMERA_ID", "0")
 CAPTURE_INTERVAL_SEC = int(os.environ.get("CAPTURE_INTERVAL_SEC", "1"))
 MOTION_SIZE_THRESHOLD = int(os.environ.get("MOTION_SIZE_THRESHOLD", "120000"))
 PORT = int(os.environ.get("PORT", "8080"))
+SERVER_ONLY = os.environ.get("SERVER_ONLY", "0") == "1"
 BASELINE_WINDOW_N = int(os.environ.get("BASELINE_WINDOW_N", "10"))
 
 BASE_DIR = Path(os.environ.get("CAPTURE_DIR", ".")).resolve()
@@ -251,8 +253,9 @@ def serve_files() -> None:
 
 
 def main() -> None:
-    capture_thread = threading.Thread(target=motion_capture_loop, daemon=True)
-    capture_thread.start()
+    if not SERVER_ONLY:
+        capture_thread = threading.Thread(target=motion_capture_loop, daemon=True)
+        capture_thread.start()
     serve_files()
 
 
