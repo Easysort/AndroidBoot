@@ -3,7 +3,7 @@
 """
 Absolute simplest motion capture on Android (Termux):
 - Captures a photo every second via termux-camera-photo
-- Detects motion via file-size change threshold
+- Detects motion via deviation from rolling average of last non-motion sizes
 - Saves EVERY frame: motion -> ./motion, non-motion -> ./non-motion
 - Serves a basic HTTP directory listing so you can browse images
 
@@ -16,6 +16,7 @@ Environment overrides (optional):
 - MOTION_SIZE_THRESHOLD (bytes, default "50000")
 - PORT (default "8080")
 - CAPTURE_DIR (default current directory)
+- BASELINE_WINDOW_N (default "10") size of rolling window for baseline
 """
 
 import os
@@ -26,12 +27,14 @@ import shutil
 from datetime import datetime
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
+from collections import deque
 
 
 CAMERA_ID = os.environ.get("CAMERA_ID", "0")
 CAPTURE_INTERVAL_SEC = int(os.environ.get("CAPTURE_INTERVAL_SEC", "1"))
 MOTION_SIZE_THRESHOLD = int(os.environ.get("MOTION_SIZE_THRESHOLD", "120000"))
 PORT = int(os.environ.get("PORT", "8080"))
+BASELINE_WINDOW_N = int(os.environ.get("BASELINE_WINDOW_N", "10"))
 
 BASE_DIR = Path(os.environ.get("CAPTURE_DIR", ".")).resolve()
 MOTION_DIR = BASE_DIR / "motion"
@@ -39,6 +42,7 @@ NON_MOTION_DIR = BASE_DIR / "non-motion"
 TMP_DIR = BASE_DIR / "tmp"
 
 _last_file_size_bytes: int | None = None
+_baseline_non_motion_sizes = deque(maxlen=BASELINE_WINDOW_N)
 
 
 def ensure_directories() -> None:
@@ -79,7 +83,8 @@ def motion_capture_loop() -> None:
     print("Starting motion capture loop:")
     print(f"- Camera ID: {CAMERA_ID}")
     print(f"- Interval: {CAPTURE_INTERVAL_SEC}s")
-    print(f"- Motion threshold: {MOTION_SIZE_THRESHOLD} bytes")
+    print(f"- Motion threshold (abs diff from baseline): {MOTION_SIZE_THRESHOLD} bytes")
+    print(f"- Baseline window: last {BASELINE_WINDOW_N} non-motion frames")
     print(f"- Saving to: {MOTION_DIR} and {NON_MOTION_DIR}")
 
     while True:
@@ -97,11 +102,16 @@ def motion_capture_loop() -> None:
         except FileNotFoundError:
             current_size = 0
 
-        # Detect motion via file-size difference
+        # Detect motion via deviation from rolling baseline of non-motion sizes
+        # If baseline not established, treat as non-motion and seed the baseline.
         motion = False
-        if _last_file_size_bytes is not None:
-            if abs(current_size - _last_file_size_bytes) >= MOTION_SIZE_THRESHOLD:
+        if len(_baseline_non_motion_sizes) >= 1:
+            baseline_avg = sum(_baseline_non_motion_sizes) / len(_baseline_non_motion_sizes)
+            if abs(current_size - baseline_avg) >= MOTION_SIZE_THRESHOLD:
                 motion = True
+        # Update baseline with non-motion frames only
+        if not motion:
+            _baseline_non_motion_sizes.append(current_size)
         _last_file_size_bytes = current_size
 
         # Decide destination and move
