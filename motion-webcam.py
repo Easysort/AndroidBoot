@@ -22,6 +22,8 @@ Environment overrides (optional):
 - OPENCV_HOG (default "0"): if "1", also run HOG person detector (slower)
 - OPENCV_DOWNSCALE_WIDTH (default "320"): working width for detection (0=orig)
 - MOTION_MIN_AREA (default "1200"): min contour area to consider as motion
+- OPENCV_USE_DIFF (default "1"): use fast frame differencing
+- DIFF_THRESH (default "25"): binary threshold for frame differencing
 """
 
 import os
@@ -53,6 +55,8 @@ OPENCV_ENABLE = os.environ.get("OPENCV_ENABLE", "0") == "1"
 OPENCV_HOG = os.environ.get("OPENCV_HOG", "0") == "1"
 OPENCV_DOWNSCALE_WIDTH = int(os.environ.get("OPENCV_DOWNSCALE_WIDTH", "320"))
 MOTION_MIN_AREA = int(os.environ.get("MOTION_MIN_AREA", "1200"))
+OPENCV_USE_DIFF = os.environ.get("OPENCV_USE_DIFF", "1") == "1"
+DIFF_THRESH = int(os.environ.get("DIFF_THRESH", "25"))
 
 BASE_DIR = Path(os.environ.get("CAPTURE_DIR", ".")).resolve()
 MOTION_DIR = BASE_DIR / "motion"
@@ -65,6 +69,7 @@ _baseline_non_motion_sizes = deque(maxlen=BASELINE_WINDOW_N)
 # OpenCV persistent detectors (initialized lazily if enabled)
 _bg_subtractor = None
 _hog_detector = None
+_prev_gray_small = None  # previous grayscale (downscaled) frame for diff
 
 
 def human_readable_size(num_bytes: int) -> str:
@@ -341,10 +346,30 @@ def detect_motion_opencv(image_path: Path) -> bool:
             if a >= MOTION_MIN_AREA:
                 motion_area += int(a)
 
+    # Fast frame differencing (very responsive)
+    global _prev_gray_small
+    if OPENCV_USE_DIFF:
+        if _prev_gray_small is not None and _prev_gray_small.shape == gray.shape:
+            diff = cv2.absdiff(gray, _prev_gray_small)
+            th = cv2.threshold(diff, DIFF_THRESH, 255, cv2.THRESH_BINARY)[1]
+            th = cv2.morphologyEx(th, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+            try:
+                cnts2, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            except ValueError:
+                _tmp, cnts2, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)  # type: ignore
+            for c in cnts2:
+                a = cv2.contourArea(c)
+                if a >= MOTION_MIN_AREA:
+                    motion_area += int(a)
+        # update previous after computing diff
+        _prev_gray_small = gray
+
     person_detected = False
     if OPENCV_HOG and _hog_detector is not None:
-        rects, _ = _hog_detector.detectMultiScale(img, winStride=(8, 8), padding=(8, 8), scale=1.05)
-        person_detected = len(rects) > 0
+        # Only run HOG if motion hints exist to save CPU
+        if motion_area >= MOTION_MIN_AREA:
+            rects, _ = _hog_detector.detectMultiScale(img, winStride=(8, 8), padding=(8, 8), scale=1.05)
+            person_detected = len(rects) > 0
 
     # Consider motion if any person detected or sufficient moving area
     return person_detected or (motion_area >= MOTION_MIN_AREA)
