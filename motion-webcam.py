@@ -45,6 +45,19 @@ _last_file_size_bytes: int | None = None
 _baseline_non_motion_sizes = deque(maxlen=BASELINE_WINDOW_N)
 
 
+def human_readable_size(num_bytes: int) -> str:
+    if num_bytes < 1024:
+        return f"{num_bytes} B"
+    kb = num_bytes / 1024.0
+    if kb < 1024:
+        return f"{int(kb)} KB"
+    mb = kb / 1024.0
+    if mb < 1024:
+        return f"{mb:.1f} MB"
+    gb = mb / 1024.0
+    return f"{gb:.2f} GB"
+
+
 def ensure_directories() -> None:
     for d in (MOTION_DIR, NON_MOTION_DIR, TMP_DIR):
         d.mkdir(parents=True, exist_ok=True)
@@ -186,7 +199,17 @@ class GridHandler(SimpleHTTPRequestHandler):
             row = []
             for i, p in enumerate(files, 1):
                 rel = os.path.relpath(p, BASE_DIR).replace("\\", "/")
-                cell = f"<div class='cell'><img loading='lazy' src='/{rel}'></div>"
+                try:
+                    sz = p.stat().st_size
+                except Exception:
+                    sz = 0
+                label = human_readable_size(int(sz))
+                cell = (
+                    "<div class='cell'>"
+                    f"<img loading='lazy' src='/{rel}'>"
+                    f"<div class='meta'>{label}</div>"
+                    "</div>"
+                )
                 row.append(cell)
                 if i % 6 == 0:
                     rows.append("<div class='row'>" + "".join(row) + "</div>")
@@ -202,6 +225,7 @@ class GridHandler(SimpleHTTPRequestHandler):
                 "a{color:#7fd} .btn{padding:6px 10px;background:#181818;border-radius:6px;display:inline-block}"
                 ".grid{display:flex;flex-direction:column;gap:8px} .row{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}"
                 ".cell{background:#181818;border-radius:6px;padding:4px} .cell img{max-width:100%;height:auto;display:block;border-radius:4px}"
+                ".meta{font-size:12px;color:#aaa;margin-top:4px;text-align:right}"
                 "</style>"
                 "<div class='top'>"
                 "<a class='btn' href='/'>Home</a>"
