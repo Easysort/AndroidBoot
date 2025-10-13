@@ -18,6 +18,10 @@ Environment overrides (optional):
 - CAPTURE_DIR (default current directory)
 - BASELINE_WINDOW_N (default "10") size of rolling window for baseline
 - SERVER_ONLY (default "0"): if "1", only run the web server/grid
+- OPENCV_ENABLE (default "0"): if "1", use OpenCV-based detection
+- OPENCV_HOG (default "0"): if "1", also run HOG person detector (slower)
+- OPENCV_DOWNSCALE_WIDTH (default "320"): working width for detection (0=orig)
+- MOTION_MIN_AREA (default "1200"): min contour area to consider as motion
 """
 
 import os
@@ -29,6 +33,14 @@ from datetime import datetime
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from collections import deque
+from typing import Optional, Tuple
+
+try:
+    import cv2  # type: ignore
+    _cv2_available = True
+except Exception:
+    cv2 = None  # type: ignore
+    _cv2_available = False
 
 
 CAMERA_ID = os.environ.get("CAMERA_ID", "0")
@@ -37,6 +49,10 @@ MOTION_SIZE_THRESHOLD = int(os.environ.get("MOTION_SIZE_THRESHOLD", "120000"))
 PORT = int(os.environ.get("PORT", "8080"))
 SERVER_ONLY = os.environ.get("SERVER_ONLY", "0") == "1"
 BASELINE_WINDOW_N = int(os.environ.get("BASELINE_WINDOW_N", "10"))
+OPENCV_ENABLE = os.environ.get("OPENCV_ENABLE", "0") == "1"
+OPENCV_HOG = os.environ.get("OPENCV_HOG", "0") == "1"
+OPENCV_DOWNSCALE_WIDTH = int(os.environ.get("OPENCV_DOWNSCALE_WIDTH", "320"))
+MOTION_MIN_AREA = int(os.environ.get("MOTION_MIN_AREA", "1200"))
 
 BASE_DIR = Path(os.environ.get("CAPTURE_DIR", ".")).resolve()
 MOTION_DIR = BASE_DIR / "motion"
@@ -45,6 +61,10 @@ TMP_DIR = BASE_DIR / "tmp"
 
 _last_file_size_bytes: int | None = None
 _baseline_non_motion_sizes = deque(maxlen=BASELINE_WINDOW_N)
+
+# OpenCV persistent detectors (initialized lazily if enabled)
+_bg_subtractor = None
+_hog_detector = None
 
 
 def human_readable_size(num_bytes: int) -> str:
@@ -101,6 +121,12 @@ def motion_capture_loop() -> None:
     print(f"- Motion threshold (abs diff from baseline): {MOTION_SIZE_THRESHOLD} bytes")
     print(f"- Baseline window: last {BASELINE_WINDOW_N} non-motion frames")
     print(f"- Saving to: {MOTION_DIR} and {NON_MOTION_DIR}")
+    if OPENCV_ENABLE and _cv2_available:
+        print("- OpenCV: background subtraction enabled")
+        if OPENCV_HOG:
+            print("- OpenCV: HOG person detector enabled")
+        if OPENCV_DOWNSCALE_WIDTH > 0:
+            print(f"- OpenCV: working width {OPENCV_DOWNSCALE_WIDTH}px")
 
     while True:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -117,16 +143,20 @@ def motion_capture_loop() -> None:
         except FileNotFoundError:
             current_size = 0
 
-        # Detect motion via deviation from rolling baseline of non-motion sizes
-        # If baseline not established, treat as non-motion and seed the baseline.
+        # Prefer OpenCV detection if available and enabled
         motion = False
-        if len(_baseline_non_motion_sizes) >= 1:
-            baseline_avg = sum(_baseline_non_motion_sizes) / len(_baseline_non_motion_sizes)
-            if abs(current_size - baseline_avg) >= MOTION_SIZE_THRESHOLD:
-                motion = True
-        # Update baseline with non-motion frames only
-        if not motion:
-            _baseline_non_motion_sizes.append(current_size)
+        if OPENCV_ENABLE and _cv2_available:
+            motion = detect_motion_opencv(temp_path)
+            if not motion:
+                _baseline_non_motion_sizes.append(current_size)
+        else:
+            # Detect motion via deviation from rolling baseline of non-motion sizes
+            if len(_baseline_non_motion_sizes) >= 1:
+                baseline_avg = sum(_baseline_non_motion_sizes) / len(_baseline_non_motion_sizes)
+                if abs(current_size - baseline_avg) >= MOTION_SIZE_THRESHOLD:
+                    motion = True
+            if not motion:
+                _baseline_non_motion_sizes.append(current_size)
         _last_file_size_bytes = current_size
 
         # Decide destination and move
@@ -250,6 +280,74 @@ def serve_files() -> None:
     print(f"Web server: http://0.0.0.0:{PORT}")
     print("Open / to choose 'motion' or 'non-motion', then browse the grid.")
     httpd.serve_forever()
+
+
+def _init_bg_subtractor():
+    global _bg_subtractor
+    if _bg_subtractor is None and _cv2_available:
+        try:
+            _bg_subtractor = cv2.createBackgroundSubtractorMOG2(history=150, varThreshold=16, detectShadows=False)
+        except Exception:
+            _bg_subtractor = None
+
+
+def _init_hog():
+    global _hog_detector
+    if _hog_detector is None and _cv2_available:
+        try:
+            hog = cv2.HOGDescriptor()
+            hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+            _hog_detector = hog
+        except Exception:
+            _hog_detector = None
+
+
+def detect_motion_opencv(image_path: Path) -> bool:
+    """OpenCV-based motion detection: background subtraction + optional HOG person.
+    Returns True if large motion or person likely present.
+    """
+    if not _cv2_available:
+        return False
+
+    _init_bg_subtractor()
+    if OPENCV_HOG:
+        _init_hog()
+
+    img = cv2.imread(str(image_path))
+    if img is None:
+        return False
+
+    # Downscale for speed
+    if OPENCV_DOWNSCALE_WIDTH > 0 and img.shape[1] > OPENCV_DOWNSCALE_WIDTH:
+        scale = OPENCV_DOWNSCALE_WIDTH / float(img.shape[1])
+        new_h = max(1, int(img.shape[0] * scale))
+        img = cv2.resize(img, (OPENCV_DOWNSCALE_WIDTH, new_h), interpolation=cv2.INTER_AREA)
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    motion_area = 0
+    if _bg_subtractor is not None:
+        fg = _bg_subtractor.apply(gray)
+        # Clean small noise
+        fg = cv2.threshold(fg, 200, 255, cv2.THRESH_BINARY)[1]
+        fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+        # Count large contours
+        try:
+            cnts, _ = cv2.findContours(fg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        except ValueError:
+            _tmp, cnts, _ = cv2.findContours(fg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)  # type: ignore
+        for c in cnts:
+            a = cv2.contourArea(c)
+            if a >= MOTION_MIN_AREA:
+                motion_area += int(a)
+
+    person_detected = False
+    if OPENCV_HOG and _hog_detector is not None:
+        rects, _ = _hog_detector.detectMultiScale(img, winStride=(8, 8), padding=(8, 8), scale=1.05)
+        person_detected = len(rects) > 0
+
+    # Consider motion if any person detected or sufficient moving area
+    return person_detected or (motion_area >= MOTION_MIN_AREA)
 
 
 def main() -> None:
