@@ -1,6 +1,5 @@
 #!/usr/bin/python
 from PIL import Image, ImageChops
-import numpy as np
 from os import listdir, remove
 from datetime import datetime
 from argparse import ArgumentParser
@@ -11,7 +10,9 @@ from random import randint
 
 
 def dif_of_images(image1, image2):
-    return np.sum(np.array(ImageChops.difference(image1, image2).getdata()))*10**-3
+    diff = ImageChops.difference(image1, image2)
+    total = sum(diff.getdata())
+    return total * 1e-3
 
 
 def setup_num():
