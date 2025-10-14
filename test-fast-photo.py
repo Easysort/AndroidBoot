@@ -6,6 +6,9 @@ from collections import deque
 import threading
 import shutil
 from uuid import uuid4
+from datetime import datetime, timezone, timedelta
+import pathlib
+import requests
 
 import cv2
 import numpy as np
@@ -27,6 +30,78 @@ RESIZE_WIDTH = int(os.getenv("MOTION_RESIZE_WIDTH", "320"))
 MOTION_PIXEL_THRESHOLD = int(os.getenv("MOTION_PIXEL_THRESHOLD", "25"))
 MOTION_AREA_RATIO_THRESHOLD = float(os.getenv("MOTION_AREA_RATIO_THRESHOLD", "0.01"))
 MEAN_SAVE_PATH = os.path.join(RUN_DIR, "background_mean.npy")
+
+# Supabase config (follow uploader.py style)
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
+SUPABASE_KEY = os.environ.get("SUPABASE_ANON_KEY") or os.environ.get("SUPABASE_KEY")
+HEADERS = {"Authorization": f"Bearer {SUPABASE_KEY}", "apikey": SUPABASE_KEY} if (SUPABASE_URL and SUPABASE_KEY) else None
+
+# Buckets
+ARGO_BUCKET = "argo"
+WARNINGS_BUCKET = "warnings"
+
+# Device ID (same approach as uploader.py)
+ID_FILE = "device_id.txt"
+if os.path.exists(ID_FILE):
+    DEVICE_ID = open(ID_FILE).read().strip()
+else:
+    DEVICE_ID = "unknown-device"
+
+# Upload rate limiting
+class UploadRateLimiter:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.last_upload_ts = 0.0
+        self.upload_times = deque()  # unix timestamps of uploads within last 60s
+
+    def _prune(self, now_ts: float):
+        # keep only events within last 60 seconds
+        while self.upload_times and (now_ts - self.upload_times[0] > 60.0):
+            self.upload_times.popleft()
+
+    def decide_bucket(self, now_ts: float):
+        with self.lock:
+            self._prune(now_ts)
+            # 3s minimum spacing between any uploads
+            if now_ts - self.last_upload_ts < 3.0:
+                return None
+            count = len(self.upload_times)
+            if count < 10:
+                # reserve a slot for ARGO upload
+                self.upload_times.append(now_ts)
+                self.last_upload_ts = now_ts
+                return ARGO_BUCKET
+            elif count == 10:
+                # 11th in the rolling minute goes to warnings only
+                self.upload_times.append(now_ts)
+                self.last_upload_ts = now_ts
+                return WARNINGS_BUCKET
+            else:
+                # 12+ do nothing
+                return None
+
+
+rate_limiter = UploadRateLimiter()
+
+
+def is_within_cet_window(now_utc: datetime) -> bool:
+    """Return True only between 22:00 and 06:00 CET (UTC+2, no DST handling)."""
+    cet = now_utc + timedelta(hours=2)
+    hr = cet.hour
+    return hr >= 22 or hr <= 6
+
+
+def upload_image(img_path: str, bucket: str) -> str:
+    """Upload image to Supabase Storage, return public URL. Follows uploader.py style."""
+    if not HEADERS or not SUPABASE_URL:
+        raise RuntimeError("Supabase env missing: SUPABASE_URL and SUPABASE_ANON_KEY")
+    now = datetime.now(timezone.utc)
+    key = f"{DEVICE_ID}/{now:%Y/%m/%d/%H}/{os.path.basename(img_path)}"
+    url = f"{SUPABASE_URL}/storage/v1/object/{bucket}/{key}"
+    with open(img_path, "rb") as f:
+        r = requests.post(url, headers={**HEADERS, "x-upsert": "true", "Content-Type": "image/jpeg"}, data=f.read())
+    r.raise_for_status()
+    return f"{SUPABASE_URL}/storage/v1/object/public/{bucket}/{key}"
 
 
 class BackgroundModel:
@@ -126,6 +201,24 @@ def classify_and_route_photo(out_path):
 
     label = "MOTION" if is_motion else "no-motion"
     print(f"Photo classified: {label} (ratio={motion_ratio:.4f}) -> {dest_path}")
+
+    # Upload only motion frames, with CET 22-06 window gating and rate limits
+    if is_motion and HEADERS and SUPABASE_URL:
+        try:
+            now_utc = datetime.now(timezone.utc)
+            if is_within_cet_window(now_utc):
+                bucket = rate_limiter.decide_bucket(time.time())
+                if bucket:
+                    url = upload_image(dest_path, bucket)
+                    print(f"Uploaded to {bucket}: {url}")
+                else:
+                    # rate-limited or spacing not met
+                    pass
+            else:
+                # Outside window; skip upload
+                pass
+        except Exception as e:
+            print(f"Upload failed: {e}")
 
 def take_photo(camera_id="0"):
     ts = time.strftime("%Y%m%dT%H%M%S", time.gmtime())
