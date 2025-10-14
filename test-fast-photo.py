@@ -101,8 +101,19 @@ def upload_image(img_path: str, bucket: str) -> str:
     now = datetime.now(timezone.utc)
     key = f"{DEVICE_ID}/{now:%Y/%m/%d/%H}/{os.path.basename(img_path)}"
     url = f"{SUPABASE_URL}/storage/v1/object/{bucket}/{key}"
+    log_event("upload_request", url=url, bucket=bucket, key=key)
     with open(img_path, "rb") as f:
-        r = requests.post(url, headers={**HEADERS, "x-upsert": "true", "Content-Type": "image/jpeg"}, data=f.read())
+        r = requests.post(
+            url,
+            headers={**HEADERS, "x-upsert": "true", "Content-Type": "image/jpeg"},
+            data=f.read(),
+        )
+    if not r.ok:
+        try:
+            body = r.text
+        except Exception:
+            body = ""
+        log_event("upload_http_error", status=r.status_code, url=url, body=body)
     r.raise_for_status()
     return f"{SUPABASE_URL}/storage/v1/object/public/{bucket}/{key}"
 
@@ -228,8 +239,7 @@ def classify_and_route_photo(out_path):
 
 def take_photo(camera_id="0"):
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    # add short suffix to avoid collisions when taking multiple per second
-    out_path = os.path.join(TMPDIR, f"photo_{ts}_{uuid4().hex[:6]}.jpg")
+    out_path = os.path.join(TMPDIR, f"photo_{ts}.jpg")
     try:
         subprocess.run(
             ["termux-camera-photo", "-c", str(camera_id), out_path],
