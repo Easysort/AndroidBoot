@@ -75,6 +75,12 @@ class BackgroundModel:
             except Exception as e:
                 print(f"Failed loading mean from {path}: {e}")
 
+    def reset(self):
+        with self.lock:
+            # clear frame buffer and mean image
+            self.frames.clear()
+            self.mean_image = None
+
 
 background_model = BackgroundModel(maxlen=BUFFER_SIZE, resize_width=RESIZE_WIDTH)
 background_model.try_load_mean(MEAN_SAVE_PATH)
@@ -100,9 +106,10 @@ def classify_and_route_photo(out_path):
         motion_ratio = float(cv2.countNonZero(thresh)) / float(thresh.size)
         is_motion = motion_ratio >= MOTION_AREA_RATIO_THRESHOLD
 
-    # Update background with current frame and persist mean for others
-    background_model.update(gray)
-    background_model.save_mean(MEAN_SAVE_PATH)
+    # Update background only if no motion detected; persist mean for others
+    if not is_motion:
+        background_model.update(gray)
+        background_model.save_mean(MEAN_SAVE_PATH)
 
     # Route photo to appropriate folder
     target_dir = MOTION_DIR if is_motion else NO_MOTION_DIR
@@ -138,6 +145,17 @@ def take_photo(camera_id="0"):
         print(f"Error taking photo at {ts}: {e}")
 
 def main(interval=1, camera_id="0"):
+    # Reset run directory on startup
+    try:
+        if os.path.exists(RUN_DIR):
+            shutil.rmtree(RUN_DIR)
+        os.makedirs(MOTION_DIR, exist_ok=True)
+        os.makedirs(NO_MOTION_DIR, exist_ok=True)
+    except Exception as e:
+        print(f"Failed resetting run directory: {e}")
+    # Start fresh background
+    background_model.reset()
+
     with ThreadPoolExecutor(max_workers=4) as executor:
         while True:
             executor.submit(take_photo, camera_id)
