@@ -17,7 +17,9 @@ latest_capture = {
     "path": IMG_DIR / IMG_NAME,
     "timestamp": 0.0,
     "error": None,
-    "history": deque(maxlen=10)  # Keep last 10 timestamps
+    "history": deque(maxlen=10),
+    "last_stderr": None,
+    "last_returncode": None
 }
 lock = threading.Lock()
 
@@ -30,29 +32,76 @@ def take_photo_forever():
             # Start a new capture process every interval, don't wait for the last to finish
             def _capture():
                 try:
-                    subprocess.run([
+                    print(f"[{time.strftime('%H:%M:%S')}] Attempting capture to {tmp_path}")
+                    
+                    # Run the camera command and capture output
+                    result = subprocess.run([
                         "termux-camera-photo", "-c", CAMERA_ID, str(tmp_path)
-                    ], timeout=10, check=True)
-                    if tmp_path.exists() and tmp_path.stat().st_size > 0:
-                        tmp_path.replace(dest_path)
-                        capture_time = time.time()
-                        with lock:
-                            latest_capture["timestamp"] = capture_time
-                            latest_capture["error"] = None
-                            latest_capture["history"].append(capture_time)
+                    ], timeout=10, capture_output=True, text=True)
+                    
+                    print(f"[{time.strftime('%H:%M:%S')}] Return code: {result.returncode}")
+                    if result.stdout:
+                        print(f"[{time.strftime('%H:%M:%S')}] stdout: {result.stdout}")
+                    if result.stderr:
+                        print(f"[{time.strftime('%H:%M:%S')}] stderr: {result.stderr}")
+                    
+                    # Check if file was created
+                    if tmp_path.exists():
+                        file_size = tmp_path.stat().st_size
+                        print(f"[{time.strftime('%H:%M:%S')}] File created, size: {file_size} bytes")
+                        
+                        if file_size > 0:
+                            tmp_path.replace(dest_path)
+                            capture_time = time.time()
+                            with lock:
+                                latest_capture["timestamp"] = capture_time
+                                latest_capture["error"] = None
+                                latest_capture["history"].append(capture_time)
+                                latest_capture["last_returncode"] = result.returncode
+                                latest_capture["last_stderr"] = result.stderr if result.stderr else None
+                            print(f"[{time.strftime('%H:%M:%S')}] ✓ Capture successful!")
+                        else:
+                            with lock:
+                                latest_capture["error"] = "Photo file is empty (0 bytes)"
+                                latest_capture["last_returncode"] = result.returncode
+                                latest_capture["last_stderr"] = result.stderr if result.stderr else None
+                            print(f"[{time.strftime('%H:%M:%S')}] ✗ File is empty")
                     else:
+                        error_msg = f"No file created. Return code: {result.returncode}"
+                        if result.stderr:
+                            error_msg += f". Error: {result.stderr}"
                         with lock:
-                            latest_capture["error"] = "No photo file produced"
-                except Exception as e:
+                            latest_capture["error"] = error_msg
+                            latest_capture["last_returncode"] = result.returncode
+                            latest_capture["last_stderr"] = result.stderr if result.stderr else None
+                        print(f"[{time.strftime('%H:%M:%S')}] ✗ {error_msg}")
+                        
+                except subprocess.TimeoutExpired:
+                    error_msg = "Camera capture timed out (>10s)"
                     with lock:
-                        latest_capture["error"] = str(e)
+                        latest_capture["error"] = error_msg
+                    print(f"[{time.strftime('%H:%M:%S')}] ✗ {error_msg}")
+                except FileNotFoundError:
+                    error_msg = "termux-camera-photo command not found"
+                    with lock:
+                        latest_capture["error"] = error_msg
+                    print(f"[{time.strftime('%H:%M:%S')}] ✗ {error_msg}")
+                except Exception as e:
+                    error_msg = f"{type(e).__name__}: {str(e)}"
+                    with lock:
+                        latest_capture["error"] = error_msg
+                    print(f"[{time.strftime('%H:%M:%S')}] ✗ Exception: {error_msg}")
                 finally:
                     if tmp_path.exists():
-                        tmp_path.unlink(missing_ok=True)
+                        try:
+                            tmp_path.unlink()
+                        except:
+                            pass
             threading.Thread(target=_capture, daemon=True).start()
         except Exception as e:
             with lock:
                 latest_capture["error"] = str(e)
+            print(f"[{time.strftime('%H:%M:%S')}] ✗ Outer exception: {e}")
         # Just sleep for the interval. Overlapping threads will be fine.
         time.sleep(PHOTO_INTERVAL)
 
@@ -63,23 +112,24 @@ TEMPLATE = """
 <!doctype html>
 <title>Fast Photo Viewer</title>
 <style>
-body { font-family: sans-serif; background: #232323; color: #fafafa; text-align: center; }
-.imgframe { margin: 20px auto; border: 2px solid #888; display: inline-block; background: #181818; }
+body { font-family: sans-serif; background: #232323; color: #fafafa; text-align: center; padding: 20px; }
+.imgframe { margin: 20px auto; border: 2px solid #888; display: inline-block; background: #181818; min-height: 300px; }
 #timestamp { font-size: 2em; margin-top: 10px; }
-#error { color: #ff5555; font-size: 1.2em; margin: 10px; }
-#history { margin: 20px auto; max-width: 600px; text-align: left; font-family: monospace; }
+#error { color: #ff5555; font-size: 1.2em; margin: 10px; white-space: pre-wrap; }
+#history { margin: 20px auto; max-width: 600px; text-align: left; font-family: monospace; font-size: 0.9em; }
 #history h3 { text-align: center; }
 #history ul { list-style: none; padding: 0; }
 #history li { padding: 5px; border-bottom: 1px solid #444; }
-#debug { color: #888; font-size: 0.9em; margin: 10px; }
+#debug { color: #888; font-size: 0.9em; margin: 10px; white-space: pre-wrap; }
 </style>
 <h1>Fast Photo</h1>
 <div id="timestamp">--</div>
 <div id="error"></div>
 <div id="debug"></div>
 <div class="imgframe">
-    <img id="liveimg" src="/photo?ts={{ ts }}" width="480" style="max-width: 95vw;" 
-         onerror="this.style.display='none'; document.getElementById('error').textContent='Image failed to load'">
+    <img id="liveimg" src="/photo?ts={{ ts }}" width="480" style="max-width: 95vw; display: none;" 
+         onload="this.style.display='inline';"
+         onerror="console.error('Image load error');">
 </div>
 <div id="history">
     <h3>Last 10 Capture Times</h3>
@@ -88,7 +138,6 @@ body { font-family: sans-serif; background: #232323; color: #fafafa; text-align:
 <script>
 function refreshImg() {
     var img = document.getElementById('liveimg');
-    img.style.display = 'inline';
     img.src = '/photo?ts=' + Date.now();
 }
 function refreshTime() {
@@ -96,10 +145,19 @@ function refreshTime() {
         var micros = Math.round(d.since * 1000000);
         document.getElementById('timestamp').textContent = "Last updated: " + micros.toLocaleString() + " μs ago";
         
-        if(d.error)
+        var debugInfo = 'Image exists: ' + d.image_exists + 
+                       ' | Last TS: ' + d.timestamp +
+                       ' | Return code: ' + d.last_returncode;
+        if(d.last_stderr) {
+            debugInfo += '\\nStderr: ' + d.last_stderr;
+        }
+        document.getElementById('debug').textContent = debugInfo;
+        
+        if(d.error) {
             document.getElementById('error').textContent = "Error: " + d.error;
-        else
+        } else {
             document.getElementById('error').textContent = "";
+        }
         
         // Update history
         var historyList = document.getElementById('historyList');
@@ -108,16 +166,16 @@ function refreshTime() {
             d.history.forEach((ts, idx) => {
                 var li = document.createElement('li');
                 var date = new Date(ts * 1000);
-                var timeStr = date.toLocaleTimeString() + '.' + date.getMilliseconds();
+                var timeStr = date.toLocaleTimeString() + '.' + String(date.getMilliseconds()).padStart(3, '0');
                 li.textContent = (d.history.length - idx) + '. ' + timeStr + ' (' + ts.toFixed(6) + 's)';
                 historyList.appendChild(li);
             });
         } else {
             historyList.innerHTML = '<li>No captures yet...</li>';
         }
-        
-        // Debug info
-        document.getElementById('debug').textContent = 'Image exists: ' + d.image_exists + ' | Last TS: ' + d.timestamp;
+    }).catch(e => {
+        console.error('Fetch error:', e);
+        document.getElementById('error').textContent = 'Failed to fetch metadata: ' + e;
     });
 }
 setInterval(refreshImg, 1500);
@@ -136,10 +194,11 @@ def index():
 @app.route("/photo")
 def photo():
     img = IMG_DIR / IMG_NAME
+    print(f"[{time.strftime('%H:%M:%S')}] Photo request - exists: {img.exists()}")
     if img.exists() and img.stat().st_size > 0:
-        return send_from_directory(IMG_DIR, IMG_NAME)
+        return send_from_directory(IMG_DIR, IMG_NAME, mimetype='image/jpeg')
     else:
-        # Return a placeholder or 1x1 transparent pixel instead of 404
+        # Return a 1x1 transparent pixel instead of 404
         return Response(
             b'\x47\x49\x46\x38\x39\x61\x01\x00\x01\x00\x00\x00\x00\x21\xf9\x04\x01\x00\x00\x00\x00\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x01\x44\x00\x3b',
             mimetype='image/gif'
@@ -151,6 +210,8 @@ def photo_meta():
         ts = latest_capture["timestamp"]
         error = latest_capture["error"]
         history = list(latest_capture["history"])
+        last_stderr = latest_capture["last_stderr"]
+        last_returncode = latest_capture["last_returncode"]
     since = time.time() - ts if ts else -1
     img_exists = (IMG_DIR / IMG_NAME).exists()
     return {
@@ -158,11 +219,16 @@ def photo_meta():
         "since": since, 
         "error": error,
         "history": history,
-        "image_exists": img_exists
+        "image_exists": img_exists,
+        "last_stderr": last_stderr,
+        "last_returncode": last_returncode
     }
 
 if __name__ == "__main__":
     # Start the photo thread
+    print(f"[{time.strftime('%H:%M:%S')}] Starting camera capture thread")
+    print(f"[{time.strftime('%H:%M:%S')}] Camera ID: {CAMERA_ID}")
+    print(f"[{time.strftime('%H:%M:%S')}] Image directory: {IMG_DIR.absolute()}")
     threading.Thread(target=take_photo_forever, daemon=True).start()
-    print(f"Serving live image at http://127.0.0.1:5100")
+    print(f"[{time.strftime('%H:%M:%S')}] Serving live image at http://0.0.0.0:5100")
     app.run("0.0.0.0", 5100, debug=False)
