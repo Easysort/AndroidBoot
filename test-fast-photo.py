@@ -55,34 +55,43 @@ else:
 class UploadRateLimiter:
     def __init__(self):
         self.lock = threading.Lock()
-        self.last_upload_ts = 0.0
-        self.upload_times = deque()  # unix timestamps of uploads within last 60s
+        # Rolling 1-hour window of successful uploads
+        self.upload_times_hour = deque()
+        # Burst control per motion: allow first 2, then 5s cooldown
+        self.uploads_in_burst = 0
+        self.cooldown_until_ts = 0.0
 
-    def _prune(self, now_ts: float):
-        # keep only events within last 60 seconds
-        while self.upload_times and (now_ts - self.upload_times[0] > 60.0):
-            self.upload_times.popleft()
+    def _prune_hour(self, now_ts: float):
+        # keep only events within last 3600 seconds
+        while self.upload_times_hour and (now_ts - self.upload_times_hour[0] > 3600.0):
+            self.upload_times_hour.popleft()
 
-    def decide_bucket(self, now_ts: float):
+    def decide_allow_upload(self, now_ts: float):
+        """Return (allowed: bool, reason: Optional[str]).
+        Enforces 15/hour cap and burst: first 2 allowed immediately, then 5s cooldown.
+        """
         with self.lock:
-            self._prune(now_ts)
-            # 3s minimum spacing between any uploads
-            if now_ts - self.last_upload_ts < 3.0:
-                return None
-            count = len(self.upload_times)
-            if count < 10:
-                # reserve a slot for ARGO upload
-                self.upload_times.append(now_ts)
-                self.last_upload_ts = now_ts
-                return ARGO_BUCKET
-            elif count == 10:
-                # 11th in the rolling minute goes to warnings only
-                self.upload_times.append(now_ts)
-                self.last_upload_ts = now_ts
-                return WARNINGS_BUCKET
-            else:
-                # 12+ do nothing
-                return None
+            # Reset burst state after cooldown passes
+            if now_ts >= self.cooldown_until_ts and self.uploads_in_burst >= 2:
+                self.uploads_in_burst = 0
+
+            self._prune_hour(now_ts)
+            if len(self.upload_times_hour) >= 15:
+                return False, "hour_cap"
+
+            if now_ts < self.cooldown_until_ts:
+                return False, "cooldown"
+
+            if self.uploads_in_burst < 2:
+                self.uploads_in_burst += 1
+                if self.uploads_in_burst == 2:
+                    self.cooldown_until_ts = now_ts + 5.0
+                # Reserve slot in hour window now
+                self.upload_times_hour.append(now_ts)
+                return True, None
+
+            # Should not reach here due to cooldown guard, but be safe
+            return False, "cooldown"
 
 
 rate_limiter = UploadRateLimiter()
@@ -223,10 +232,11 @@ def classify_and_route_photo(out_path):
                 local = (now_utc + timedelta(hours=UPLOAD_UTC_OFFSET_HOURS)).isoformat()
                 log_event("upload_skip", reason="outside_window", motion_ratio=round(motion_ratio, 6), now_utc=now_utc.isoformat(), now_local=local)
                 return
-            bucket = rate_limiter.decide_bucket(time.time())
-            if not bucket:
-                log_event("upload_skip", reason="rate_limited", motion_ratio=round(motion_ratio, 6))
+            allowed, reason = rate_limiter.decide_allow_upload(time.time())
+            if not allowed:
+                log_event("upload_skip", reason=reason, motion_ratio=round(motion_ratio, 6))
                 return
+            bucket = ARGO_BUCKET
             url = upload_image(out_path, bucket)
             log_event("upload_success", bucket=bucket, url=url, motion_ratio=round(motion_ratio, 6))
         except Exception as e:
