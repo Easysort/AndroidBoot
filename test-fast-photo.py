@@ -89,11 +89,9 @@ rate_limiter = UploadRateLimiter()
 
 
 def is_within_cet_window(now_utc: datetime) -> bool:
-    """Return True only between 22:00 and 06:00 local (UTC+offset). End is exclusive."""
     local = now_utc + timedelta(hours=UPLOAD_UTC_OFFSET_HOURS)
     hr = local.hour
-    # 22:00 ≤ t < 06:00
-    return hr >= 22 or hr < 6
+    return hr < 22 or hr >= 6
 
 
 def upload_image(img_path: str, bucket: str) -> str:
