@@ -9,20 +9,21 @@ from uuid import uuid4
 from datetime import datetime, timezone, timedelta
 import pathlib
 import requests
+from dotenv import load_dotenv
+import json
 
 import cv2
 import numpy as np
 
+load_dotenv()
+
 TMPDIR = os.path.expanduser("~/tmp")
 os.makedirs(TMPDIR, exist_ok=True)
 
-# Output directories
+# Working directory for background mean and any state
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RUN_DIR = os.path.join(BASE_DIR, "run")
-MOTION_DIR = os.path.join(RUN_DIR, "motion")
-NO_MOTION_DIR = os.path.join(RUN_DIR, "no-motion")
-os.makedirs(MOTION_DIR, exist_ok=True)
-os.makedirs(NO_MOTION_DIR, exist_ok=True)
+os.makedirs(RUN_DIR, exist_ok=True)
 
 # Motion detection settings (tweak via env vars)
 BUFFER_SIZE = int(os.getenv("MOTION_BUFFER_SIZE", "10"))
@@ -161,10 +162,19 @@ background_model = BackgroundModel(maxlen=BUFFER_SIZE, resize_width=RESIZE_WIDTH
 background_model.try_load_mean(MEAN_SAVE_PATH)
 
 
+def log_event(event: str, **fields):
+    try:
+        payload = {"event": event, "ts": datetime.now(timezone.utc).isoformat(), **fields}
+        print(json.dumps(payload, ensure_ascii=False))
+    except Exception:
+        # Best-effort logging; fall back to simple print
+        print(f"{event}: {fields}")
+
+
 def classify_and_route_photo(out_path):
     image = cv2.imread(out_path)
     if image is None:
-        print(f"Failed to read image for analysis: {out_path}")
+        log_event("analyze_error", reason="read_failed", path=out_path)
         return
 
     gray = background_model.preprocess(image)
@@ -181,47 +191,40 @@ def classify_and_route_photo(out_path):
         motion_ratio = float(cv2.countNonZero(thresh)) / float(thresh.size)
         is_motion = motion_ratio >= MOTION_AREA_RATIO_THRESHOLD
 
-    # Update background only if no motion detected; persist mean for others
+    # Update background only if no motion detected; persist mean for others; then delete temp
     if not is_motion:
         background_model.update(gray)
         background_model.save_mean(MEAN_SAVE_PATH)
-
-    # Route photo to appropriate folder
-    target_dir = MOTION_DIR if is_motion else NO_MOTION_DIR
-    base_name = os.path.basename(out_path)
-    dest_path = os.path.join(target_dir, base_name)
-    if os.path.exists(dest_path):
-        name, ext = os.path.splitext(base_name)
-        dest_path = os.path.join(target_dir, f"{name}_{uuid4().hex[:6]}{ext}")
-    try:
-        shutil.move(out_path, dest_path)
-    except Exception as e:
-        print(f"Failed moving photo to destination: {e}")
+        try:
+            os.remove(out_path)
+        except Exception:
+            pass
+        log_event("no_motion", motion_ratio=round(motion_ratio, 6))
         return
 
-    label = "MOTION" if is_motion else "no-motion"
-    print(f"Photo classified: {label} (ratio={motion_ratio:.4f}) -> {dest_path}")
-
     # Upload only motion frames, with CET 22-06 window gating and rate limits
-    if is_motion and HEADERS and SUPABASE_URL:
+    if HEADERS and SUPABASE_URL:
         try:
             now_utc = datetime.now(timezone.utc)
-            if is_within_cet_window(now_utc):
-                bucket = rate_limiter.decide_bucket(time.time())
-                if bucket:
-                    url = upload_image(dest_path, bucket)
-                    print(f"Uploaded to {bucket}: {url}")
-                else:
-                    # rate-limited or spacing not met
-                    pass
-            else:
-                # Outside window; skip upload
-                pass
+            if not is_within_cet_window(now_utc):
+                log_event("upload_skip", reason="outside_window", motion_ratio=round(motion_ratio, 6))
+                return
+            bucket = rate_limiter.decide_bucket(time.time())
+            if not bucket:
+                log_event("upload_skip", reason="rate_limited", motion_ratio=round(motion_ratio, 6))
+                return
+            url = upload_image(out_path, bucket)
+            log_event("upload_success", bucket=bucket, url=url, motion_ratio=round(motion_ratio, 6))
         except Exception as e:
-            print(f"Upload failed: {e}")
+            log_event("upload_error", error=str(e))
+        finally:
+            try:
+                os.remove(out_path)
+            except Exception:
+                pass
 
 def take_photo(camera_id="0"):
-    ts = time.strftime("%Y%m%dT%H%M%S", time.gmtime())
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     # add short suffix to avoid collisions when taking multiple per second
     out_path = os.path.join(TMPDIR, f"photo_{ts}_{uuid4().hex[:6]}.jpg")
     try:
@@ -238,14 +241,13 @@ def take_photo(camera_id="0"):
         print(f"Error taking photo at {ts}: {e}")
 
 def main(interval=1, camera_id="0"):
-    # Reset run directory on startup
+    # Reset run directory on startup (keep only as state dir for background mean)
     try:
         if os.path.exists(RUN_DIR):
             shutil.rmtree(RUN_DIR)
-        os.makedirs(MOTION_DIR, exist_ok=True)
-        os.makedirs(NO_MOTION_DIR, exist_ok=True)
+        os.makedirs(RUN_DIR, exist_ok=True)
     except Exception as e:
-        print(f"Failed resetting run directory: {e}")
+        log_event("run_reset_error", error=str(e))
     # Start fresh background
     background_model.reset()
 
