@@ -3,7 +3,7 @@ import time
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 
-TMPDIR = os.path.expanduser("~/.cache/phone-metrics")
+TMPDIR = os.path.expanduser("~/tmp")
 os.makedirs(TMPDIR, exist_ok=True)
 
 def take_photo(camera_id="0"):
