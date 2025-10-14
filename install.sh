@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Load env (non-exported like ROLE still visible here)
-source "./phone.env"
+source "./.env"
 
 pkg up -y
 pkg i -y tmux openssh golang python jq curl tsu procps termux-api git coreutils inetutils vim expect
