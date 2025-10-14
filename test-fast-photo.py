@@ -45,10 +45,36 @@ def take_photo_forever():
                     if result.stderr:
                         print(f"[{time.strftime('%H:%M:%S')}] stderr: {result.stderr}")
                     
-                    # Check if file was created
+                    # Wait for the file to be written (termux-camera-photo returns before file is complete)
+                    max_wait = 5  # seconds
+                    wait_start = time.time()
+                    last_size = 0
+                    stable_count = 0
+                    
+                    while (time.time() - wait_start) < max_wait:
+                        if tmp_path.exists():
+                            current_size = tmp_path.stat().st_size
+                            print(f"[{time.strftime('%H:%M:%S')}] File size: {current_size} bytes")
+                            
+                            if current_size > 0:
+                                # Check if size is stable (hasn't changed in 2 checks)
+                                if current_size == last_size:
+                                    stable_count += 1
+                                    if stable_count >= 2:  # Size stable for 2 checks
+                                        print(f"[{time.strftime('%H:%M:%S')}] File size stable at {current_size} bytes")
+                                        break
+                                else:
+                                    stable_count = 0
+                                last_size = current_size
+                            
+                            time.sleep(0.1)  # Check every 100ms
+                        else:
+                            time.sleep(0.05)  # Wait for file to be created
+                    
+                    # Check final result
                     if tmp_path.exists():
                         file_size = tmp_path.stat().st_size
-                        print(f"[{time.strftime('%H:%M:%S')}] File created, size: {file_size} bytes")
+                        print(f"[{time.strftime('%H:%M:%S')}] Final file size: {file_size} bytes")
                         
                         if file_size > 0:
                             tmp_path.replace(dest_path)
@@ -59,13 +85,14 @@ def take_photo_forever():
                                 latest_capture["history"].append(capture_time)
                                 latest_capture["last_returncode"] = result.returncode
                                 latest_capture["last_stderr"] = result.stderr if result.stderr else None
-                            print(f"[{time.strftime('%H:%M:%S')}] ✓ Capture successful!")
+                            print(f"[{time.strftime('%H:%M:%S')}] ✓ Capture successful! ({file_size} bytes)")
                         else:
+                            error_msg = f"Photo file is empty (0 bytes) after {max_wait}s wait"
                             with lock:
-                                latest_capture["error"] = "Photo file is empty (0 bytes)"
+                                latest_capture["error"] = error_msg
                                 latest_capture["last_returncode"] = result.returncode
                                 latest_capture["last_stderr"] = result.stderr if result.stderr else None
-                            print(f"[{time.strftime('%H:%M:%S')}] ✗ File is empty")
+                            print(f"[{time.strftime('%H:%M:%S')}] ✗ {error_msg}")
                     else:
                         error_msg = f"No file created. Return code: {result.returncode}"
                         if result.stderr:
