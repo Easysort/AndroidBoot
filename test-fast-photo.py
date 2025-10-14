@@ -41,6 +41,9 @@ HEADERS = {"Authorization": f"Bearer {SUPABASE_KEY}", "apikey": SUPABASE_KEY} if
 ARGO_BUCKET = "argo"
 WARNINGS_BUCKET = "warnings"
 
+# Upload window timezone offset (hours from UTC). Default: +2 (CET/CEST per user request)
+UPLOAD_UTC_OFFSET_HOURS = float(os.environ.get("UPLOAD_UTC_OFFSET", "2"))
+
 # Device ID (same approach as uploader.py)
 ID_FILE = "device_id.txt"
 if os.path.exists(ID_FILE):
@@ -86,10 +89,11 @@ rate_limiter = UploadRateLimiter()
 
 
 def is_within_cet_window(now_utc: datetime) -> bool:
-    """Return True only between 22:00 and 06:00 CET (UTC+2, no DST handling)."""
-    cet = now_utc + timedelta(hours=2)
-    hr = cet.hour
-    return hr >= 22 or hr <= 6
+    """Return True only between 22:00 and 06:00 local (UTC+offset). End is exclusive."""
+    local = now_utc + timedelta(hours=UPLOAD_UTC_OFFSET_HOURS)
+    hr = local.hour
+    # 22:00 ≤ t < 06:00
+    return hr >= 22 or hr < 6
 
 
 def upload_image(img_path: str, bucket: str) -> str:
@@ -207,7 +211,8 @@ def classify_and_route_photo(out_path):
         try:
             now_utc = datetime.now(timezone.utc)
             if not is_within_cet_window(now_utc):
-                log_event("upload_skip", reason="outside_window", motion_ratio=round(motion_ratio, 6))
+                local = (now_utc + timedelta(hours=UPLOAD_UTC_OFFSET_HOURS)).isoformat()
+                log_event("upload_skip", reason="outside_window", motion_ratio=round(motion_ratio, 6), now_utc=now_utc.isoformat(), now_local=local)
                 return
             bucket = rate_limiter.decide_bucket(time.time())
             if not bucket:
