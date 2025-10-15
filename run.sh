@@ -10,9 +10,9 @@ if [ -z "$APP" ]; then
     show_usage
 fi
 
-do export PYTHONPATH="."
+export PYTHONPATH="."
 # verify everything is correctly setup
-do pytest applications/common/verify.py
+pytest applications/common/verify.py
 
 case "$APP" in
   container) SCRIPT_PATH="$HOME/AndroidBoot/applications/container/tmux-starter.sh" ;;
