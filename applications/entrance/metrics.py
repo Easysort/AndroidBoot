@@ -1,9 +1,7 @@
 import os, json, time, subprocess, requests, shutil, pathlib
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
-from dotenv import load_dotenv
-
-load_dotenv()
+from applications.common.env import Env
 
 UTC = timezone.utc
 
@@ -16,14 +14,6 @@ HEADERS = {"Authorization": f"Bearer {SUPABASE_KEY}", "apikey": SUPABASE_KEY}
 HOME = os.path.expanduser("~")
 TMPDIR = os.environ.get("TMPDIR", os.path.join(HOME, ".cache/phone-metrics"))
 pathlib.Path(TMPDIR).mkdir(parents=True, exist_ok=True)
-
-# Stable device id
-ID_FILE = "device_id.txt"
-if os.path.exists(ID_FILE):
-    DEVICE_ID = open(ID_FILE).read().strip()
-else:
-    raise RuntimeError(f"Device ID file not found: {ID_FILE}\n"
-                       f"Create one, e.g.:  echo my-phone-id > {ID_FILE}")
 
 
 def now_iso() -> str:
@@ -173,7 +163,7 @@ def main() -> None:
     hot   = hotspot_likely_on()
 
     metrics = {
-        "device_id": DEVICE_ID,
+        "device_id": Env.DEVICE_ID,
         "ts": now_iso(),
         "battery": bat,
         "cpu": {"percent": cpu_p},
@@ -183,7 +173,7 @@ def main() -> None:
     }
 
     row = {
-        "device_id": DEVICE_ID,
+        "device_id": Env.DEVICE_ID,
         "ts": metrics["ts"],
         "percentage": percentage,
         "charging": charging,

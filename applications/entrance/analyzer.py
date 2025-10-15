@@ -45,7 +45,7 @@ WARNINGS_BUCKET = "warnings"
 UPLOAD_UTC_OFFSET_HOURS = float(os.environ.get("UPLOAD_UTC_OFFSET", "2"))
 
 # Device ID (same approach as uploader.py)
-ID_FILE = "device_id.txt"
+ID_FILE = "../../device_id.txt"
 if os.path.exists(ID_FILE):
     DEVICE_ID = open(ID_FILE).read().strip()
 else:
