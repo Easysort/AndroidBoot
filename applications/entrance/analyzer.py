@@ -6,11 +6,11 @@ from collections import deque
 import threading
 import shutil
 from uuid import uuid4
+from datetime import datetime, timezone, timedelta
 import pathlib
 import requests
 from dotenv import load_dotenv
 import json
-from applications.common import Helper, Env
 
 import cv2
 import numpy as np
@@ -45,6 +45,16 @@ HEADERS = {"Authorization": f"Bearer {SUPABASE_KEY}", "apikey": SUPABASE_KEY} if
 # Buckets
 ARGO_BUCKET = "argo"
 WARNINGS_BUCKET = "warnings"
+
+# Upload window timezone offset (hours from UTC). Default: +2 (CET/CEST per user request)
+UPLOAD_UTC_OFFSET_HOURS = float(os.environ.get("UPLOAD_UTC_OFFSET", "2"))
+
+# Device ID (same approach as uploader.py)
+ID_FILE = "../../device_id.txt"
+if os.path.exists(ID_FILE):
+    DEVICE_ID = open(ID_FILE).read().strip()
+else:
+    DEVICE_ID = "unknown-device"
 
 # Upload rate limiting
 class UploadRateLimiter:
@@ -92,8 +102,9 @@ class UploadRateLimiter:
 rate_limiter = UploadRateLimiter()
 
 
-def is_within_cet_window() -> bool:
-    hr = Helper.current_time().hour
+def is_within_cet_window(now_utc: datetime) -> bool:
+    local = now_utc + timedelta(hours=UPLOAD_UTC_OFFSET_HOURS)
+    hr = local.hour
     return hr < 22 or hr >= 6
 
 
@@ -101,8 +112,8 @@ def upload_image(img_path: str, bucket: str) -> str:
     """Upload image to Supabase Storage, return public URL. Follows uploader.py style."""
     if not HEADERS or not SUPABASE_URL:
         raise RuntimeError("Supabase env missing: SUPABASE_URL and SUPABASE_ANON_KEY")
-    now = Helper.current_time()
-    key = f"{Env.DEVICE_ID}/{now:%Y/%m/%d/%H}/{os.path.basename(img_path)}"
+    now = datetime.now(timezone.utc)
+    key = f"{DEVICE_ID}/{now:%Y/%m/%d/%H}/{os.path.basename(img_path)}"
     url = f"{SUPABASE_URL}/storage/v1/object/{bucket}/{key}"
     log_event("upload_request", url=url, bucket=bucket, key=key)
     with open(img_path, "rb") as f:
@@ -180,7 +191,7 @@ background_model.try_load_mean(MEAN_SAVE_PATH)
 
 def log_event(event: str, **fields):
     try:
-        payload = {"event": event, "ts": Helper.current_time(), **fields}
+        payload = {"event": event, "ts": datetime.now(timezone.utc).isoformat(), **fields}
         print(json.dumps(payload, ensure_ascii=False))
     except Exception:
         # Best-effort logging; fall back to simple print
@@ -260,8 +271,10 @@ def classify_and_route_photo(out_path):
     # Upload only motion frames, with CET 22-06 window gating and rate limits
     if HEADERS and SUPABASE_URL:
         try:
-            if not is_within_cet_window():
-                log_event("upload_skip", reason="outside_window", motion_ratio=round(motion_ratio, 6), now_local=Helper.current_time())
+            now_utc = datetime.now(timezone.utc)
+            if not is_within_cet_window(now_utc):
+                local = (now_utc + timedelta(hours=UPLOAD_UTC_OFFSET_HOURS)).isoformat()
+                log_event("upload_skip", reason="outside_window", motion_ratio=round(motion_ratio, 6), now_utc=now_utc.isoformat(), now_local=local)
                 return
             allowed, reason = rate_limiter.decide_allow_upload(time.time())
             if not allowed:
@@ -279,7 +292,7 @@ def classify_and_route_photo(out_path):
                 pass
 
 def take_photo(camera_id="0"):
-    ts = Helper.current_time().strftime("%Y%m%dT%H%M%SZ")
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out_path = os.path.join(TMPDIR, f"photo_{ts}.jpg")
     try:
         subprocess.run(
