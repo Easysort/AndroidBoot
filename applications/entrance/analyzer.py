@@ -30,8 +30,8 @@ os.makedirs(RUN_DIR, exist_ok=True)
 # Motion detection settings (tweak via env vars)
 BUFFER_SIZE = int(os.getenv("MOTION_BUFFER_SIZE", "100"))
 RESIZE_WIDTH = int(os.getenv("MOTION_RESIZE_WIDTH", "320"))
-MOTION_PIXEL_THRESHOLD = int(os.getenv("MOTION_PIXEL_THRESHOLD", "25"))
-MOTION_AREA_RATIO_THRESHOLD = float(os.getenv("MOTION_AREA_RATIO_THRESHOLD", "0.01"))
+MOTION_PIXEL_THRESHOLD = int(os.getenv("MOTION_PIXEL_THRESHOLD", "15"))
+MOTION_AREA_RATIO_THRESHOLD = float(os.getenv("MOTION_AREA_RATIO_THRESHOLD", "0.005"))
 MEAN_SAVE_PATH = os.path.join(RUN_DIR, "background_mean.npy")
 
 # Additional thresholds for distinguishing global light shift (bad image) vs. local motion
@@ -147,7 +147,7 @@ class BackgroundModel:
             scale = self.resize_width / float(w)
             bgr_image = cv2.resize(bgr_image, (self.resize_width, int(round(h * scale))))
         gray = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, (5, 5), 0)
+        gray = cv2.GaussianBlur(gray, (3, 3), 0)
         return gray
 
     def get_mean(self):
@@ -227,7 +227,7 @@ def classify_and_route_photo(out_path):
     # High-diff mask (potential motion) and low-diff mask (global light changes)
     _, high_thresh = cv2.threshold(diff8, MOTION_PIXEL_THRESHOLD, 255, cv2.THRESH_BINARY)
     kernel = np.ones((3, 3), np.uint8)
-    high_thresh_dilated = cv2.dilate(high_thresh, kernel, iterations=2)
+    high_thresh_dilated = cv2.dilate(high_thresh, kernel, iterations=3)
     motion_ratio = float(cv2.countNonZero(high_thresh_dilated)) / float(high_thresh_dilated.size)
 
     low_mask = (diff8 >= LOW_DIFF_THRESHOLD) & (diff8 < MOTION_PIXEL_THRESHOLD)
