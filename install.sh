@@ -8,7 +8,7 @@ pkg up -y
 pkg i -y tmux openssh golang python jq curl tsu procps termux-api git coreutils inetutils vim expect
 
 # Install Python dependencies for uploader.py
-pip install requests python-dotenv
+pip install requests python-dotenv pytest
 
 # Termux permissions & wake
 termux-wake-lock || true
@@ -42,7 +42,7 @@ echo " - Disable battery optimizations for Termux."
 # fi
 
 # # Make scripts executable
-chmod +x watchdog.sh uploader.py tmux-starter.sh 98-sshd-keepalive.sh
+chmod +x watchdog.sh 98-sshd-keepalive.sh
 
 # Install Magisk service script (requires root)
 echo "Installing Magisk service script (requires root)..."
