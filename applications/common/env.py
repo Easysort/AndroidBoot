@@ -3,6 +3,7 @@ from json import load
 import os
 from dotenv import load_dotenv
 from dataclasses import dataclass
+from datetime import timezone, timedelta
 
 load_dotenv()
 
@@ -15,3 +16,4 @@ check_path = lambda path: os.path.exists(path) or (_ for _ in ()).throw(FileNotF
 @dataclass
 class Env: 
     DEVICE_ID: str = open(DEVICE_ID_PATH).read().strip() or ""
+    TIMEZONE: timezone = timezone(timedelta(hours=2)) # Default to CET

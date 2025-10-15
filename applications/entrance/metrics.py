@@ -1,9 +1,7 @@
 import os, json, time, subprocess, requests, shutil, pathlib
-from datetime import datetime, timezone
 from typing import Any, Dict, Optional
-from applications.common.env import Env
-
-UTC = timezone.utc
+from applications.common import Env, Helper
+from datetime import datetime
 
 # Env and config (match uploader.py semantics)
 SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
@@ -14,10 +12,6 @@ HEADERS = {"Authorization": f"Bearer {SUPABASE_KEY}", "apikey": SUPABASE_KEY}
 HOME = os.path.expanduser("~")
 TMPDIR = os.environ.get("TMPDIR", os.path.join(HOME, ".cache/phone-metrics"))
 pathlib.Path(TMPDIR).mkdir(parents=True, exist_ok=True)
-
-
-def now_iso() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 def sh(args, timeout: int = 5) -> str:
@@ -164,7 +158,7 @@ def main() -> None:
 
     metrics = {
         "device_id": Env.DEVICE_ID,
-        "ts": now_iso(),
+        "ts": Helper.current_time(),
         "battery": bat,
         "cpu": {"percent": cpu_p},
         "temps": {"battery_c": temperature_c, "cpu_c": cpu_t},
@@ -202,7 +196,7 @@ if __name__ == "__main__":
         except Exception as e:
             # Best-effort logging to stdout
             try:
-                print(json.dumps({"event": "metrics_error", "error": str(e), "ts": now_iso()}))
+                print(json.dumps({"event": "metrics_error", "error": str(e), "ts": Helper.current_time()}))
             except Exception:
                 pass
         time.sleep(900)  # 15 minutes

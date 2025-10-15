@@ -6,11 +6,11 @@ from collections import deque
 import threading
 import shutil
 from uuid import uuid4
-from datetime import datetime, timezone, timedelta
 import pathlib
 import requests
 from dotenv import load_dotenv
 import json
+from applications.common import Helper, Env
 
 import cv2
 import numpy as np
@@ -26,11 +26,16 @@ RUN_DIR = os.path.join(BASE_DIR, "run")
 os.makedirs(RUN_DIR, exist_ok=True)
 
 # Motion detection settings (tweak via env vars)
-BUFFER_SIZE = int(os.getenv("MOTION_BUFFER_SIZE", "10"))
+BUFFER_SIZE = int(os.getenv("MOTION_BUFFER_SIZE", "100"))
 RESIZE_WIDTH = int(os.getenv("MOTION_RESIZE_WIDTH", "320"))
 MOTION_PIXEL_THRESHOLD = int(os.getenv("MOTION_PIXEL_THRESHOLD", "25"))
 MOTION_AREA_RATIO_THRESHOLD = float(os.getenv("MOTION_AREA_RATIO_THRESHOLD", "0.01"))
 MEAN_SAVE_PATH = os.path.join(RUN_DIR, "background_mean.npy")
+
+# Additional thresholds for distinguishing global light shift (bad image) vs. local motion
+LOW_DIFF_THRESHOLD = int(os.getenv("LOW_DIFF_THRESHOLD", "5"))
+BAD_LOW_RATIO_THRESHOLD = float(os.getenv("BAD_LOW_RATIO_THRESHOLD", "0.6"))
+BAD_HIGH_RATIO_MAX = float(os.getenv("BAD_HIGH_RATIO_MAX", "0.02"))
 
 # Supabase config (follow uploader.py style)
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
@@ -40,16 +45,6 @@ HEADERS = {"Authorization": f"Bearer {SUPABASE_KEY}", "apikey": SUPABASE_KEY} if
 # Buckets
 ARGO_BUCKET = "argo"
 WARNINGS_BUCKET = "warnings"
-
-# Upload window timezone offset (hours from UTC). Default: +2 (CET/CEST per user request)
-UPLOAD_UTC_OFFSET_HOURS = float(os.environ.get("UPLOAD_UTC_OFFSET", "2"))
-
-# Device ID (same approach as uploader.py)
-ID_FILE = "../../device_id.txt"
-if os.path.exists(ID_FILE):
-    DEVICE_ID = open(ID_FILE).read().strip()
-else:
-    DEVICE_ID = "unknown-device"
 
 # Upload rate limiting
 class UploadRateLimiter:
@@ -97,9 +92,8 @@ class UploadRateLimiter:
 rate_limiter = UploadRateLimiter()
 
 
-def is_within_cet_window(now_utc: datetime) -> bool:
-    local = now_utc + timedelta(hours=UPLOAD_UTC_OFFSET_HOURS)
-    hr = local.hour
+def is_within_cet_window() -> bool:
+    hr = Helper.current_time().hour
     return hr < 22 or hr >= 6
 
 
@@ -107,8 +101,8 @@ def upload_image(img_path: str, bucket: str) -> str:
     """Upload image to Supabase Storage, return public URL. Follows uploader.py style."""
     if not HEADERS or not SUPABASE_URL:
         raise RuntimeError("Supabase env missing: SUPABASE_URL and SUPABASE_ANON_KEY")
-    now = datetime.now(timezone.utc)
-    key = f"{DEVICE_ID}/{now:%Y/%m/%d/%H}/{os.path.basename(img_path)}"
+    now = Helper.current_time()
+    key = f"{Env.DEVICE_ID}/{now:%Y/%m/%d/%H}/{os.path.basename(img_path)}"
     url = f"{SUPABASE_URL}/storage/v1/object/{bucket}/{key}"
     log_event("upload_request", url=url, bucket=bucket, key=key)
     with open(img_path, "rb") as f:
@@ -186,7 +180,7 @@ background_model.try_load_mean(MEAN_SAVE_PATH)
 
 def log_event(event: str, **fields):
     try:
-        payload = {"event": event, "ts": datetime.now(timezone.utc).isoformat(), **fields}
+        payload = {"event": event, "ts": Helper.current_time(), **fields}
         print(json.dumps(payload, ensure_ascii=False))
     except Exception:
         # Best-effort logging; fall back to simple print
@@ -202,35 +196,72 @@ def classify_and_route_photo(out_path):
     gray = background_model.preprocess(image)
     mean_image = background_model.get_mean()
 
-    is_motion = False
-    motion_ratio = 0.0
-    if mean_image is not None:
-        diff = cv2.absdiff(gray.astype(np.float32), mean_image)
-        diff8 = np.clip(diff, 0, 255).astype(np.uint8)
-        _, thresh = cv2.threshold(diff8, MOTION_PIXEL_THRESHOLD, 255, cv2.THRESH_BINARY)
-        kernel = np.ones((3, 3), np.uint8)
-        thresh = cv2.dilate(thresh, kernel, iterations=2)
-        motion_ratio = float(cv2.countNonZero(thresh)) / float(thresh.size)
-        is_motion = motion_ratio >= MOTION_AREA_RATIO_THRESHOLD
-
-    # Update background only if no motion detected; persist mean for others; then delete temp
-    if not is_motion:
+    # If no background yet, warm up the model with this frame and skip motion
+    if mean_image is None:
         background_model.update(gray)
         background_model.save_mean(MEAN_SAVE_PATH)
         try:
             os.remove(out_path)
         except Exception:
             pass
-        log_event("no_motion", motion_ratio=round(motion_ratio, 6))
+        log_event("no_motion", reason="warmup_no_mean")
+        return
+
+    # Compute absolute difference versus mean
+    diff = cv2.absdiff(gray.astype(np.float32), mean_image)
+    diff8 = np.clip(diff, 0, 255).astype(np.uint8)
+
+    # High-diff mask (potential motion) and low-diff mask (global light changes)
+    _, high_thresh = cv2.threshold(diff8, MOTION_PIXEL_THRESHOLD, 255, cv2.THRESH_BINARY)
+    kernel = np.ones((3, 3), np.uint8)
+    high_thresh_dilated = cv2.dilate(high_thresh, kernel, iterations=2)
+    motion_ratio = float(cv2.countNonZero(high_thresh_dilated)) / float(high_thresh_dilated.size)
+
+    low_mask = (diff8 >= LOW_DIFF_THRESHOLD) & (diff8 < MOTION_PIXEL_THRESHOLD)
+    total_pixels = float(diff8.size)
+    low_ratio = float(np.count_nonzero(low_mask)) / total_pixels
+    high_ratio = float(np.count_nonzero(diff8 >= MOTION_PIXEL_THRESHOLD)) / total_pixels
+
+    # Classification
+    is_bad_image = (low_ratio >= BAD_LOW_RATIO_THRESHOLD) and (high_ratio <= BAD_HIGH_RATIO_MAX)
+    is_motion = (not is_bad_image) and (motion_ratio >= MOTION_AREA_RATIO_THRESHOLD)
+
+    # Always update the background with this frame (include motion frames) and persist
+    background_model.update(gray)
+    background_model.save_mean(MEAN_SAVE_PATH)
+
+    # Handle outcomes
+    if is_bad_image:
+        try:
+            os.remove(out_path)
+        except Exception:
+            pass
+        log_event(
+            "bad_image",
+            low_ratio=round(low_ratio, 6),
+            high_ratio=round(high_ratio, 6),
+            motion_ratio=round(motion_ratio, 6),
+        )
+        return
+
+    if not is_motion:
+        try:
+            os.remove(out_path)
+        except Exception:
+            pass
+        log_event(
+            "no_motion",
+            low_ratio=round(low_ratio, 6),
+            high_ratio=round(high_ratio, 6),
+            motion_ratio=round(motion_ratio, 6),
+        )
         return
 
     # Upload only motion frames, with CET 22-06 window gating and rate limits
     if HEADERS and SUPABASE_URL:
         try:
-            now_utc = datetime.now(timezone.utc)
-            if not is_within_cet_window(now_utc):
-                local = (now_utc + timedelta(hours=UPLOAD_UTC_OFFSET_HOURS)).isoformat()
-                log_event("upload_skip", reason="outside_window", motion_ratio=round(motion_ratio, 6), now_utc=now_utc.isoformat(), now_local=local)
+            if not is_within_cet_window():
+                log_event("upload_skip", reason="outside_window", motion_ratio=round(motion_ratio, 6), now_local=Helper.current_time())
                 return
             allowed, reason = rate_limiter.decide_allow_upload(time.time())
             if not allowed:
@@ -248,7 +279,7 @@ def classify_and_route_photo(out_path):
                 pass
 
 def take_photo(camera_id="0"):
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    ts = Helper.current_time().strftime("%Y%m%dT%H%M%SZ")
     out_path = os.path.join(TMPDIR, f"photo_{ts}.jpg")
     try:
         subprocess.run(
