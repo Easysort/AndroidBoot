@@ -127,6 +127,7 @@ def hotspot_likely_on() -> Optional[bool]:
 
 def insert_row(payload: Dict[str, Any]) -> None:
     url = f"{SUPABASE_URL}/rest/v1/{TABLE}"
+    print("Payload send to Supabase: ", payload)
     r = requests.post(url, headers={**HEADERS, "Content-Type": "application/json", "Prefer": "return=minimal"}, json=payload)
     r.raise_for_status()
 
