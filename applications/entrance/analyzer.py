@@ -15,6 +15,8 @@ import json
 import cv2
 import numpy as np
 
+# needs cleaning bro.. :()
+
 load_dotenv()
 
 TMPDIR = os.path.expanduser("~/tmp")
@@ -60,29 +62,29 @@ else:
 class UploadRateLimiter:
     def __init__(self):
         self.lock = threading.Lock()
-        # Rolling 1-hour window of successful uploads
-        self.upload_times_hour = deque()
+        # Rolling 60-second window of successful uploads
+        self.upload_times_minute = deque()
         # Burst control per motion: allow first 2, then 5s cooldown
         self.uploads_in_burst = 0
         self.cooldown_until_ts = 0.0
 
-    def _prune_hour(self, now_ts: float):
-        # keep only events within last 3600 seconds
-        while self.upload_times_hour and (now_ts - self.upload_times_hour[0] > 3600.0):
-            self.upload_times_hour.popleft()
+    def _prune_minute(self, now_ts: float):
+        # keep only events within last 60 seconds
+        while self.upload_times_minute and (now_ts - self.upload_times_minute[0] > 60.0):
+            self.upload_times_minute.popleft()
 
     def decide_allow_upload(self, now_ts: float):
         """Return (allowed: bool, reason: Optional[str]).
-        Enforces 15/hour cap and burst: first 2 allowed immediately, then 5s cooldown.
+        Enforces 15/minute cap and burst: first 2 allowed immediately, then 5s cooldown.
         """
         with self.lock:
             # Reset burst state after cooldown passes
             if now_ts >= self.cooldown_until_ts and self.uploads_in_burst >= 2:
                 self.uploads_in_burst = 0
 
-            self._prune_hour(now_ts)
-            if len(self.upload_times_hour) >= 15:
-                return False, "hour_cap"
+            self._prune_minute(now_ts)
+            if len(self.upload_times_minute) >= 15:
+                return False, "minute_cap"
 
             if now_ts < self.cooldown_until_ts:
                 return False, "cooldown"
@@ -91,8 +93,8 @@ class UploadRateLimiter:
                 self.uploads_in_burst += 1
                 if self.uploads_in_burst == 2:
                     self.cooldown_until_ts = now_ts + 5.0
-                # Reserve slot in hour window now
-                self.upload_times_hour.append(now_ts)
+                # Reserve slot in minute window now
+                self.upload_times_minute.append(now_ts)
                 return True, None
 
             # Should not reach here due to cooldown guard, but be safe
