@@ -13,6 +13,7 @@ source ./.env
 set +a
 
 mkdir -p "$LOG_DIR"
+export PYTHONPATH="$REPO_DIR"
 
 # Session 1: metrics API (auto-restart loop)
 if ! tmux has-session -t metrics 2>/dev/null; then
