@@ -30,14 +30,22 @@ os.makedirs(RUN_DIR, exist_ok=True)
 # Motion detection settings (tweak via env vars)
 BUFFER_SIZE = int(os.getenv("MOTION_BUFFER_SIZE", "100"))
 RESIZE_WIDTH = int(os.getenv("MOTION_RESIZE_WIDTH", "320"))
-MOTION_PIXEL_THRESHOLD = int(os.getenv("MOTION_PIXEL_THRESHOLD", "15"))
-MOTION_AREA_RATIO_THRESHOLD = float(os.getenv("MOTION_AREA_RATIO_THRESHOLD", "0.005"))
+# Pixel intensity threshold for high differences (motion candidates)
+MOTION_PIXEL_THRESHOLD = int(os.getenv("MOTION_PIXEL_THRESHOLD", "25"))
+# Minimum portion of the frame that must be in motion (after noise filtering)
+MOTION_AREA_RATIO_THRESHOLD = float(os.getenv("MOTION_AREA_RATIO_THRESHOLD", "0.02"))
+# Minimum blob area in pixels to consider a motion region (after resize)
+MOTION_MIN_BLOB_AREA = int(os.getenv("MOTION_MIN_BLOB_AREA", "500"))
+# Require motion to persist across frames: at least PERSIST_FRAMES motion frames in last WINDOW frames
+MOTION_PERSIST_FRAMES = int(os.getenv("MOTION_PERSIST_FRAMES", "2"))
+MOTION_PERSIST_WINDOW = int(os.getenv("MOTION_PERSIST_WINDOW", "3"))
 MEAN_SAVE_PATH = os.path.join(RUN_DIR, "background_mean.npy")
 
 # Additional thresholds for distinguishing global light shift (bad image) vs. local motion
-LOW_DIFF_THRESHOLD = int(os.getenv("LOW_DIFF_THRESHOLD", "5"))
-BAD_LOW_RATIO_THRESHOLD = float(os.getenv("BAD_LOW_RATIO_THRESHOLD", "0.6"))
-BAD_HIGH_RATIO_MAX = float(os.getenv("BAD_HIGH_RATIO_MAX", "0.02"))
+LOW_DIFF_THRESHOLD = int(os.getenv("LOW_DIFF_THRESHOLD", "8"))
+# Treat very broad low differences as global light shift (bad image)
+BAD_LOW_RATIO_THRESHOLD = float(os.getenv("BAD_LOW_RATIO_THRESHOLD", "0.7"))
+BAD_HIGH_RATIO_MAX = float(os.getenv("BAD_HIGH_RATIO_MAX", "0.03"))
 
 # Supabase config (follow uploader.py style)
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
@@ -226,9 +234,19 @@ def classify_and_route_photo(out_path):
 
     # High-diff mask (potential motion) and low-diff mask (global light changes)
     _, high_thresh = cv2.threshold(diff8, MOTION_PIXEL_THRESHOLD, 255, cv2.THRESH_BINARY)
+    # Noise filtering: open (erode->dilate) to drop speckles, then close small gaps
     kernel = np.ones((3, 3), np.uint8)
-    high_thresh_dilated = cv2.dilate(high_thresh, kernel, iterations=3)
+    opened = cv2.morphologyEx(high_thresh, cv2.MORPH_OPEN, kernel, iterations=1)
+    high_thresh_dilated = cv2.dilate(opened, kernel, iterations=2)
     motion_ratio = float(cv2.countNonZero(high_thresh_dilated)) / float(high_thresh_dilated.size)
+
+    # Contour-based area filter to reject tiny blobs
+    contours, _ = cv2.findContours(high_thresh_dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    large_contours = [c for c in contours if cv2.contourArea(c) >= MOTION_MIN_BLOB_AREA]
+    large_mask = np.zeros_like(high_thresh_dilated)
+    if large_contours:
+        cv2.drawContours(large_mask, large_contours, -1, 255, thickness=cv2.FILLED)
+    large_ratio = float(cv2.countNonZero(large_mask)) / float(large_mask.size)
 
     low_mask = (diff8 >= LOW_DIFF_THRESHOLD) & (diff8 < MOTION_PIXEL_THRESHOLD)
     total_pixels = float(diff8.size)
@@ -237,11 +255,18 @@ def classify_and_route_photo(out_path):
 
     # Classification
     is_bad_image = (low_ratio >= BAD_LOW_RATIO_THRESHOLD) and (high_ratio <= BAD_HIGH_RATIO_MAX)
-    is_motion = (not is_bad_image) and (motion_ratio >= MOTION_AREA_RATIO_THRESHOLD)
+    is_motion = (not is_bad_image) and (large_ratio >= MOTION_AREA_RATIO_THRESHOLD)
 
     # Always update the background with this frame (include motion frames) and persist
     background_model.update(gray)
     background_model.save_mean(MEAN_SAVE_PATH)
+
+    # Simple temporal persistence to avoid one-frame spikes
+    if not hasattr(classify_and_route_photo, "recent_motion"):
+        classify_and_route_photo.recent_motion = deque(maxlen=MOTION_PERSIST_WINDOW)
+    recent_motion = classify_and_route_photo.recent_motion
+    recent_motion.append(bool(is_motion))
+    persisted_motion = sum(1 for m in recent_motion if m) >= MOTION_PERSIST_FRAMES
 
     # Handle outcomes
     if is_bad_image:
@@ -254,10 +279,11 @@ def classify_and_route_photo(out_path):
             low_ratio=round(low_ratio, 6),
             high_ratio=round(high_ratio, 6),
             motion_ratio=round(motion_ratio, 6),
+            large_ratio=round(large_ratio, 6),
         )
         return
 
-    if not is_motion:
+    if not persisted_motion:
         try:
             os.remove(out_path)
         except Exception:
@@ -267,6 +293,8 @@ def classify_and_route_photo(out_path):
             low_ratio=round(low_ratio, 6),
             high_ratio=round(high_ratio, 6),
             motion_ratio=round(motion_ratio, 6),
+            large_ratio=round(large_ratio, 6),
+            persisted_frames=len(recent_motion),
         )
         return
 
