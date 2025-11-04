@@ -8,7 +8,7 @@ pkg up -y
 pkg i -y tmux openssh golang python jq curl tsu procps termux-api git coreutils inetutils vim expect
 
 # Install Python dependencies for uploader.py
-pip install requests python-dotenv pytest
+pip install requests python-dotenv pytest opencv-python-headless numpy pillow
 
 # Termux permissions & wake
 termux-wake-lock || true
