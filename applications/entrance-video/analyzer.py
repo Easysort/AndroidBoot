@@ -49,6 +49,7 @@ def sanitize_key_component(s: str) -> str:
 
 # Capture and encoding parameters (env-tunable)
 CAPTURE_INTERVAL_S = float(os.getenv("CAPTURE_INTERVAL_S", "1"))
+RECORD_CHUNK_SECONDS = int(os.getenv("RECORD_CHUNK_SECONDS", "1"))
 JPEG_TARGET_KB = int(os.getenv("JPEG_TARGET_KB", "100"))
 JPEG_MAX_DIM = int(os.getenv("JPEG_MAX_DIM", "1280")) if os.getenv("JPEG_MAX_DIM") else None
 JPEG_PROGRESSIVE = os.getenv("JPEG_PROGRESSIVE", "1") != "0"
@@ -183,6 +184,84 @@ def capture_one(camera_id: str, dest_dir: str) -> str | None:
             pass
 
 
+def extract_1fps_from_video(video_path: str, start_utc: datetime) -> list[tuple[str, datetime]]:
+    """Extract 1-fps frames from a video file. Returns list of (jpeg_path, frame_ts_utc)."""
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        log_event("record_extract_open_failed", path=video_path)
+        return []
+    fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    if fps <= 0.0 or frame_count <= 0:
+        cap.release()
+        log_event("record_extract_meta_invalid", fps=fps, frames=frame_count)
+        return []
+
+    duration_s = max(0, int(round(frame_count / float(fps))))
+    results: list[tuple[str, datetime]] = []
+    for sec in range(duration_s):
+        target_idx = int(round(sec * fps))
+        if target_idx >= frame_count:
+            break
+        cap.set(cv2.CAP_PROP_POS_FRAMES, target_idx)
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            continue
+        ts = start_utc + timedelta(seconds=sec)
+        seg = segment_id_from_dt(ts)
+        dest_dir = segment_dir(seg)
+        ts_name = ts.strftime("%Y%m%dT%H%M%SZ")
+        out_path = os.path.join(dest_dir, f"photo_{ts_name}.jpg")
+        try:
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            im = Image.fromarray(rgb)
+            data = compress_jpeg(
+                im,
+                max_dim=JPEG_MAX_DIM,
+                target_kb=JPEG_TARGET_KB,
+                progressive=JPEG_PROGRESSIVE,
+            )
+            with open(out_path, "wb") as f:
+                f.write(data)
+            results.append((out_path, ts))
+        except Exception as e:
+            log_event("record_extract_compress_error", error=str(e))
+            continue
+    cap.release()
+    return results
+
+
+def record_chunk(camera_id: str, seconds: int) -> tuple[str | None, datetime]:
+    """Record a short chunk and return (video_path, start_utc)."""
+    start_utc = datetime.now(timezone.utc)
+    ts = start_utc.strftime("%Y%m%dT%H%M%SZ")
+    out_path = os.path.join(TMPDIR, f"chunk_{ts}.mp4")
+    try:
+        subprocess.run(
+            [
+                "termux-camera-record",
+                "-c",
+                str(camera_id),
+                "-l",
+                str(int(seconds)),
+                out_path,
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=max(15, seconds + 10),
+        )
+        return out_path, start_utc
+    except Exception as e:
+        log_event("record_error", error=str(e))
+        try:
+            if os.path.exists(out_path):
+                os.remove(out_path)
+        except Exception:
+            pass
+        return None, start_utc
+
+
 def images_to_mp4(images: list[str], out_mp4: str, fps: int) -> bool:
     if not images:
         return False
@@ -257,17 +336,18 @@ def finalize_and_upload_segment(seg_id: str) -> None:
     try:
         url = upload_file(mp4_path, ARGO_BUCKET, key, "video/mp4")
         log_event("video_upload_success", url=url, key=key, segment=seg_id)
-        # Cleanup images and local mp4
-        try:
-            shutil.rmtree(seg_path)
-        except Exception:
-            pass
-        try:
-            os.remove(mp4_path)
-        except Exception:
-            pass
     except Exception as e:
         log_event("video_upload_error", error=str(e), key=key, segment=seg_id)
+        return
+    # Cleanup images and local mp4 (outside try so failures don’t mask upload issues)
+    try:
+        shutil.rmtree(seg_path)
+    except Exception:
+        pass
+    try:
+        os.remove(mp4_path)
+    except Exception:
+        pass
 
 
 def main():
@@ -275,9 +355,24 @@ def main():
     seg_dir = segment_dir(current_seg)
     encoder = ThreadPoolExecutor(max_workers=1)
     capture_pool = ThreadPoolExecutor(max_workers=4)
-    last_capture = 0.0
+    last_submit = 0.0
+
+    def record_one_second_and_extract():
+        vid_path, start_utc = record_chunk(CAMERA_ID, RECORD_CHUNK_SECONDS)
+        if not vid_path:
+            return
+        try:
+            pairs = extract_1fps_from_video(vid_path, start_utc)
+            for img_path, ts in pairs:
+                log_event("image_captured", path=img_path, segment=segment_id_from_dt(ts))
+        finally:
+            try:
+                os.remove(vid_path)
+            except Exception:
+                pass
 
     while True:
+        # finalize previous segment on boundary
         now = datetime.now(timezone.utc)
         seg_now = segment_id_from_dt(now)
         if seg_now != current_seg:
@@ -287,10 +382,9 @@ def main():
             seg_dir = segment_dir(current_seg)
 
         t = time.time()
-        if t - last_capture >= CAPTURE_INTERVAL_S:
-            # schedule capture+compress to run concurrently; log inside task
-            capture_pool.submit(capture_one, CAMERA_ID, seg_dir)
-            last_capture = t
+        if t - last_submit >= CAPTURE_INTERVAL_S:
+            capture_pool.submit(record_one_second_and_extract)
+            last_submit = t
 
         time.sleep(0.05)
 
