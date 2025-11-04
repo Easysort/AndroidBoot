@@ -41,6 +41,12 @@ if os.path.exists(ID_FILE):
 else:
     DEVICE_ID = "unknown-device"
 
+
+def sanitize_key_component(s: str) -> str:
+    # allow alnum, dash, underscore, dot; replace others (incl curly quotes) with '_'
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
+    return "".join(ch if ch in allowed else "_" for ch in s)
+
 # Capture and encoding parameters (env-tunable)
 CAPTURE_INTERVAL_S = float(os.getenv("CAPTURE_INTERVAL_S", "1"))
 JPEG_TARGET_KB = int(os.getenv("JPEG_TARGET_KB", "100"))
@@ -246,7 +252,8 @@ def finalize_and_upload_segment(seg_id: str) -> None:
 
     # Upload under same place images would be: DEVICE_ID/YYYY/mm/dd/HH/
     seg_dt = datetime.strptime(seg_id, "%Y%m%dT%H%M%SZ")
-    key = f"{DEVICE_ID}/{seg_dt:%Y/%m/%d/%H}/{mp4_name}"
+    safe_device = sanitize_key_component(DEVICE_ID)
+    key = f"{safe_device}/{seg_dt:%Y/%m/%d/%H}/{mp4_name}"
     try:
         url = upload_file(mp4_path, ARGO_BUCKET, key, "video/mp4")
         log_event("video_upload_success", url=url, key=key, segment=seg_id)
@@ -267,13 +274,13 @@ def main():
     current_seg = segment_id_from_dt(datetime.now(timezone.utc))
     seg_dir = segment_dir(current_seg)
     encoder = ThreadPoolExecutor(max_workers=1)
+    capture_pool = ThreadPoolExecutor(max_workers=4)
     last_capture = 0.0
 
     while True:
         now = datetime.now(timezone.utc)
         seg_now = segment_id_from_dt(now)
         if seg_now != current_seg:
-            # finalize previous in background
             prev = current_seg
             encoder.submit(finalize_and_upload_segment, prev)
             current_seg = seg_now
@@ -281,12 +288,10 @@ def main():
 
         t = time.time()
         if t - last_capture >= CAPTURE_INTERVAL_S:
-            out = capture_one(CAMERA_ID, seg_dir)
-            if out:
-                log_event("image_captured", path=out, segment=current_seg)
+            # schedule capture+compress to run concurrently; log inside task
+            capture_pool.submit(capture_one, CAMERA_ID, seg_dir)
             last_capture = t
 
-        # short sleep to avoid busy loop
         time.sleep(0.05)
 
 
