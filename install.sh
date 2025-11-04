@@ -6,9 +6,12 @@ source "./.env"
 
 pkg up -y
 pkg i -y tmux openssh golang python jq curl tsu procps termux-api git coreutils inetutils vim expect
+pkg i -y x11-repo
+pkg i -y dbus qt6-qtbase
+pkg i -y opencv-python python-numpy
 
 # Install Python dependencies for uploader.py
-pip install requests python-dotenv pytest opencv-python-headless numpy pillow
+pip install requests python-dotenv pytest pillow
 
 # Termux permissions & wake
 termux-wake-lock || true
