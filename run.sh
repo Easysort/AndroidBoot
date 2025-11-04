@@ -17,6 +17,7 @@ pytest applications/common/verify.py
 case "$APP" in
   container) SCRIPT_PATH="$HOME/AndroidBoot/applications/container/tmux-starter.sh" ;;
   entrance) SCRIPT_PATH="$HOME/AndroidBoot/applications/entrance/tmux-starter.sh" ;;
+  entrance-video) SCRIPT_PATH="$HOME/AndroidBoot/applications/entrance-video/tmux-starter.sh" ;;
   test) termux-camera-photo -c 0 $HOME/AndroidBoot/test.jpg; echo "Image available at $HOME/AndroidBoot/test.jpg"; exit $? ;;
   *) echo "Unknown application: $APP"; show_usage ;;
 esac
