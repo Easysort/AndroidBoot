@@ -1,5 +1,4 @@
 
-from json import load
 import os
 from dotenv import load_dotenv
 from dataclasses import dataclass
@@ -17,3 +16,23 @@ check_path = lambda path: os.path.exists(path) or (_ for _ in ()).throw(FileNotF
 class Env: 
     DEVICE_ID: str = open(DEVICE_ID_PATH).read().strip() or ""
     TIMEZONE: timezone = timezone(timedelta(hours=2)) # Default to CET
+    SUPABASE_URL: str = os.environ["SUPABASE_URL"].rstrip("/")
+    SUPABASE_KEY: str = os.environ["SUPABASE_ANON_KEY"]
+    TABLE: str = os.environ.get("SUPABASE_TABLE", "phone_metrics")
+    HEADERS: dict = {"Authorization": f"Bearer {SUPABASE_KEY}", "apikey": SUPABASE_KEY}
+
+    UPLOAD_BUCKET: str = os.environ["UPLOAD_BUCKET"]
+
+    BASE_DIR = os.environ["REPO_DIR"]
+    RUN_DIR = os.path.join(BASE_DIR, "run")
+    IMAGES_DIR = os.path.join(RUN_DIR, "images")
+    VIDEOS_DIR = os.path.join(RUN_DIR, "videos")
+    COMPRESSED_DIR = os.path.join(RUN_DIR, "compressed")
+
+    FPS = 4 # To change FPS change here and the delay in continuous_capture.sh to 1/FPS
+
+    def __post_init__(self):
+        os.makedirs(self.RUN_DIR, exist_ok=True)
+        os.makedirs(self.IMAGES_DIR, exist_ok=True)
+        os.makedirs(self.VIDEOS_DIR, exist_ok=True)
+        os.makedirs(self.COMPRESSED_DIR, exist_ok=True)
