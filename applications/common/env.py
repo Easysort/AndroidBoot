@@ -28,6 +28,7 @@ class Env:
 
     UPLOAD_BUCKET: str = os.environ["UPLOAD_BUCKET"]
 
+    # If you add directories here, add them to the dir_checks method below!
     BASE_DIR = os.environ["REPO_DIR"]
     RUN_DIR = os.path.join(BASE_DIR, "run")
     IMAGES_DIR = os.path.join(RUN_DIR, "images")
@@ -36,8 +37,12 @@ class Env:
 
     FPS = 4 # To change FPS change here and the delay in continuous_capture.sh to 1/FPS
 
-    def __post_init__(self):
+    def dir_checks(self):
         os.makedirs(self.RUN_DIR, exist_ok=True)
         os.makedirs(self.IMAGES_DIR, exist_ok=True)
         os.makedirs(self.VIDEOS_DIR, exist_ok=True)
         os.makedirs(self.COMPRESSED_DIR, exist_ok=True)
+
+dirs_to_check = [Env.RUN_DIR, Env.IMAGES_DIR, Env.VIDEOS_DIR, Env.COMPRESSED_DIR]
+for dir in dirs_to_check:
+    os.makedirs(dir, exist_ok=True)
