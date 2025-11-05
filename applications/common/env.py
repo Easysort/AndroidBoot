@@ -35,7 +35,7 @@ class Env:
     VIDEOS_DIR = os.path.join(RUN_DIR, "videos")
     COMPRESSED_DIR = os.path.join(RUN_DIR, "compressed")
 
-    FPS = 4 # To change FPS change here and the delay in continuous_capture.sh to 1/FPS
+    FPS = 4
 
     def dir_checks(self):
         os.makedirs(self.RUN_DIR, exist_ok=True)

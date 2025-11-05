@@ -22,7 +22,7 @@ fi
 
 # Session 2: analyzer
 if ! tmux has-session -t capture 2>/dev/null; then
-  tmux new-session -d -s capture "while :; do continuous_capture.sh >>'$LOG_DIR/capture.log' 2>&1; echo 'capture crashed, restarting in 5s' >>'$LOG_DIR/capture.log'; sleep 5; done"
+  tmux new-session -d -s capture "while :; do python continuous_capture.py >>'$LOG_DIR/capture.log' 2>&1; echo 'capture crashed, restarting in 5s' >>'$LOG_DIR/capture.log'; sleep 5; done"
 fi
 
 # Session 3: watchdog

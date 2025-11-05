@@ -95,6 +95,10 @@ def upload_metrics() -> None:
     print(json.dumps({"event": "metrics_uploaded", "ts": row["ts"]}))
 
 def compress_images_to_mp4() -> str:
+    
+    for file in os.listdir(Env.COMPRESSED_DIR): # Clean up old compressed images if any (could be here if error in previous run)
+        os.remove(os.path.join(Env.COMPRESSED_DIR, file))
+
     files = sorted(os.listdir(Env.IMAGES_DIR))
     for i, file in enumerate(files):
         shutil.move(os.path.join(Env.IMAGES_DIR, file), os.path.join(Env.COMPRESSED_DIR, f"{i:06d}.jpg"))
