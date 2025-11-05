@@ -1,0 +1,1 @@
+termux-job-scheduler --cancel --job-id 700
