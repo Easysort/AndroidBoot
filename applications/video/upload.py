@@ -90,7 +90,7 @@ def upload_metrics() -> None:
 
     url = f"{Env.SUPABASE_URL}/rest/v1/{Env.TABLE}"
     print("Metrics send to Supabase: ", row)
-    r = requests.post(url, headers={**Env.HEADERS, "Content-Type": "application/json", "Prefer": "return=minimal"}, json=row)
+    r = requests.post(url, headers={**Env.HEADERS(), "Content-Type": "application/json", "Prefer": "return=minimal"}, json=row)
     r.raise_for_status()
     print(json.dumps({"event": "metrics_uploaded", "ts": row["ts"]}))
 
@@ -122,12 +122,20 @@ def compress_images_to_mp4() -> str:
 def upload_mp4() -> None:
     print("Compressing images to MP4 started at", Helper.current_time())
     mp4_file = compress_images_to_mp4()
-    r = requests.post(
-       f"{Env.SUPABASE_URL}/storage/v1/object/{Env.UPLOAD_BUCKET}/{Env.DEVICE_ID}/{Helper.current_time().strftime("%Y/%m/%d/%H")}/{Helper.current_time().strftime("%H%M%S")}.mp4",
-       headers={**Env.HEADERS, "x-upsert": "true", "Content-Type": "video/mp4"},
-       data=open(mp4_file, "rb").read(),
-       timeout=60,
-    )
+    # Build object key and URL safely
+    ts = Helper.current_time()
+    hour_path = ts.strftime("%Y/%m/%d/%H")
+    filename = ts.strftime("%H%M%S") + ".mp4"
+    key = f"{Env.UPLOAD_BUCKET}/{Env.DEVICE_ID}/{hour_path}/{filename}"
+    url = f"{Env.SUPABASE_URL}/storage/v1/object/{key}"
+
+    with open(mp4_file, "rb") as fh:
+        r = requests.post(
+            url,
+            headers={**Env.HEADERS(), "x-upsert": "true", "Content-Type": "video/mp4"},
+            data=fh.read(),
+            timeout=60,
+        )
     if not r.ok:
         try: body = r.text
         except Exception: body = ""
