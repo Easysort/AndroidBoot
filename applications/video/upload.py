@@ -105,10 +105,10 @@ def compress_images_to_mp4() -> str:
 
     cmd = f"""
     ffmpeg -v error -stats -y \
-    -framerate {Env.FPS*10} -i {shlex.quote(Env.COMPRESSED_DIR)}/%06d.jpg \
-    -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=nv12" \
+    -framerate {Env.FPS} -i {shlex.quote(Env.COMPRESSED_DIR)}/%06d.jpg \
+    -vf "scale=trunc(iw/16)*16:trunc(ih/16)*16,format=nv12,fps=10" \
     -c:v h264_mediacodec -b:v 2000k -maxrate 2500k -bufsize 5000k \
-    -g {Env.FPS * 10 * 60} -r {Env.FPS * 10} -movflags +faststart \
+    -g 60 -r 10 -movflags +faststart \
     {shlex.quote(Env.VIDEOS_DIR)}/video_temp.mp4
     """
 
