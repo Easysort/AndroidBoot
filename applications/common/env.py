@@ -21,10 +21,8 @@ class Env:
     TABLE: str = os.environ.get("SUPABASE_TABLE", "phone_metrics")
 
     @staticmethod
-    def _default_headers() -> dict:
+    def HEADERS() -> dict:
         return {"Authorization": f"Bearer {Env.SUPABASE_KEY}", "apikey": Env.SUPABASE_KEY}
-
-    HEADERS: dict = field(default_factory=_default_headers)
 
     UPLOAD_BUCKET: str = os.environ["UPLOAD_BUCKET"]
 
