@@ -6,7 +6,7 @@ import shutil
 
 
 def termux_battery() -> Dict[str, Any]:
-    out = subprocess.check_output(["termux-battery-status"], stderr=subprocess.STDOUT, timeout=4).decode("utf-8", "replace").strip()
+    out = subprocess.check_output(["termux-battery-status"], stderr=subprocess.STDOUT, timeout=30).decode("utf-8", "replace").strip()
     return json.loads(out) if out else {}
 
 
