@@ -73,7 +73,7 @@ def upload_metrics() -> None:
 
     row = {
         "device_id": Env.DEVICE_ID,
-        "ts": Helper.current_time(),
+        "ts": Helper.current_time().isoformat(),
         "percentage": percentage,
         "charging": charging,
         "temperature_c": temperature_c,
@@ -139,9 +139,9 @@ def upload_mp4() -> None:
     if not r.ok:
         try: body = r.text
         except Exception: body = ""
-        print(json.dumps({"event": "mp4_upload_error", "ts": Helper.current_time(), "body": body}))
+        print(json.dumps({"event": "mp4_upload_error", "ts": ts.isoformat(), "body": body}))
         return
-    print(json.dumps({"event": "mp4_uploaded", "ts": Helper.current_time()}))
+    print(json.dumps({"event": "mp4_uploaded", "ts": ts.isoformat()}))
     r.raise_for_status()
 
     os.remove(mp4_file)
