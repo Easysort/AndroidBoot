@@ -106,9 +106,8 @@ def compress_images_to_mp4() -> str:
     cmd = f"""
     ffmpeg -v error -stats -y \
     -framerate {Env.FPS} -i {shlex.quote(Env.COMPRESSED_DIR)}/%06d.jpg \
-    -c:v libx265 -preset slow -crf 28 \
-    -x265-params keyint={Env.FPS * 60}:min-keyint=1:scenecut=0 \
-    -pix_fmt yuv420p -r {Env.FPS} -movflags +faststart -tag:v hvc1 \
+    -c:v hevc_mediacodec -b:v 1500k -maxrate 2000k -bufsize 4000k \
+    -g {Env.FPS * 60} -pix_fmt yuv420p -r {Env.FPS} -movflags +faststart -tag:v hvc1 \
     {shlex.quote(Env.VIDEOS_DIR)}/video_temp.mp4
     """
 

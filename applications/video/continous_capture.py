@@ -13,4 +13,5 @@ while True:
             ["termux-camera-photo", "-c", "0", out_path],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True
         ))
-    time.sleep(1 / Env.FPS)  # 0.25s at FPS=4
+        print(f"Started capture at {Helper.current_time()}")
+    time.sleep(1 / Env.FPS)

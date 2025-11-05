@@ -35,7 +35,7 @@ class Env:
     VIDEOS_DIR = os.path.join(RUN_DIR, "videos")
     COMPRESSED_DIR = os.path.join(RUN_DIR, "compressed")
 
-    FPS = 4
+    FPS = 2
 
     def dir_checks(self):
         os.makedirs(self.RUN_DIR, exist_ok=True)
