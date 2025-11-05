@@ -15,7 +15,7 @@ check_path = lambda path: os.path.exists(path) or (_ for _ in ()).throw(FileNotF
 @dataclass
 class Env: 
     DEVICE_ID: str = open(DEVICE_ID_PATH).read().strip() or ""
-    TIMEZONE: timezone = timezone(timedelta(hours=2)) # Default to CET
+    TIMEZONE: timezone = timezone(timedelta(hours=1)) # Fixed CET (UTC+1)
     SUPABASE_URL: str = os.environ["SUPABASE_URL"].rstrip("/")
     SUPABASE_KEY: str = os.environ["SUPABASE_ANON_KEY"]
     TABLE: str = os.environ.get("SUPABASE_TABLE", "phone_metrics")

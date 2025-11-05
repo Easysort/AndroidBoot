@@ -120,6 +120,10 @@ def compress_images_to_mp4() -> str:
 
 
 def upload_mp4() -> None:
+    if Helper.current_time().hour < 6 or Helper.current_time().hour >= 22:
+        print("Skipping MP4 upload because it's outside of CET window (current hour: ", Helper.current_time().hour, ")")
+        return
+
     print("Compressing images to MP4 started at", Helper.current_time())
     mp4_file = compress_images_to_mp4()
     # Build object key and URL safely

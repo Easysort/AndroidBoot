@@ -5,6 +5,10 @@ procs: list[subprocess.Popen] = []
 MAX_PROCS = Env.FPS * 4 # Takes about 4 seconds for a single capture
 
 while True:
+    if Helper.current_time().hour < 6 or Helper.current_time().hour >= 22:
+        time.sleep(60)
+        continue
+
     procs = [p for p in procs if p.poll() is None]
 
     if len(procs) < MAX_PROCS:
