@@ -114,6 +114,7 @@ def compress_images_to_mp4() -> str:
 
 
 def upload_mp4() -> None:
+    print("Compressing images to MP4 started at", Helper.current_time())
     mp4_file = compress_images_to_mp4()
     r = requests.post(
        f"{Env.SUPABASE_URL}/storage/v1/object/{Env.UPLOAD_BUCKET}/{Env.DEVICE_ID}/{Helper.current_time().strftime("%Y/%m/%d/%H")}/{Helper.current_time().strftime("%H%M%S")}.mp4",
@@ -132,6 +133,8 @@ def upload_mp4() -> None:
     os.remove(mp4_file)
     for file in os.listdir(Env.COMPRESSED_DIR):
         os.remove(os.path.join(Env.COMPRESSED_DIR, file))
+
+    print("MP4 uploaded and compressed images removed at", Helper.current_time())
 
 
 if __name__ == "__main__":

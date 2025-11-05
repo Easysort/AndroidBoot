@@ -1,7 +1,7 @@
 
 import os
 from dotenv import load_dotenv
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timezone, timedelta
 
 load_dotenv()
@@ -19,7 +19,12 @@ class Env:
     SUPABASE_URL: str = os.environ["SUPABASE_URL"].rstrip("/")
     SUPABASE_KEY: str = os.environ["SUPABASE_ANON_KEY"]
     TABLE: str = os.environ.get("SUPABASE_TABLE", "phone_metrics")
-    HEADERS: dict = {"Authorization": f"Bearer {SUPABASE_KEY}", "apikey": SUPABASE_KEY}
+
+    @staticmethod
+    def _default_headers() -> dict:
+        return {"Authorization": f"Bearer {Env.SUPABASE_KEY}", "apikey": Env.SUPABASE_KEY}
+
+    HEADERS: dict = field(default_factory=_default_headers)
 
     UPLOAD_BUCKET: str = os.environ["UPLOAD_BUCKET"]
 
