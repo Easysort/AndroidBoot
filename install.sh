@@ -10,6 +10,9 @@ pkg i -y x11-repo
 pkg i -y dbus qt6-qtbase
 pkg i -y opencv-python python-numpy
 
+termux-setup-storage
+pkg install -y ffmpeg coreutils findutils termux-api
+
 # Install Python dependencies for uploader.py
 pip install requests python-dotenv pytest pillow
 
