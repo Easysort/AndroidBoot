@@ -159,5 +159,5 @@ if __name__ == "__main__":
     while True:
         upload_mp4()
         upload_metrics()
-        time.sleep(60)  # 15 minutes = 900
+        time.sleep(900)  # 15 minutes = 900
 
