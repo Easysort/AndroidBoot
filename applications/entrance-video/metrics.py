@@ -1,20 +1,26 @@
-import os, json, time, subprocess, requests, shutil, pathlib
-from typing import Any, Dict, Optional
-from applications.common import Env, Helper
-from datetime import datetime
+import json
+import os
+import pathlib
+import subprocess
+import time
+from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import Any, Dict, List, Optional
 
-# Env and config (match uploader.py semantics)
-SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
-SUPABASE_KEY = os.environ["SUPABASE_ANON_KEY"]
-TABLE        = os.environ.get("SUPABASE_TABLE", "phone_metrics")
-HEADERS = {"Authorization": f"Bearer {SUPABASE_KEY}", "apikey": SUPABASE_KEY}
 
 HOME = os.path.expanduser("~")
 TMPDIR = os.environ.get("TMPDIR", os.path.join(HOME, ".cache/phone-metrics"))
 pathlib.Path(TMPDIR).mkdir(parents=True, exist_ok=True)
 
+HOST = os.environ.get("HEALTH_HOST", "0.0.0.0")
+PORT = int(os.environ.get("HEALTH_PORT", "5000"))
 
-def sh(args, timeout: int = 5) -> str:
+MAX_CPU_TEMP_C = float(os.environ.get("MAX_CPU_TEMP_C", "85"))
+MAX_BATTERY_TEMP_C = float(os.environ.get("MAX_BATTERY_TEMP_C", "50"))
+MAX_STORAGE_PERCENT = float(os.environ.get("MAX_STORAGE_PERCENT", "95"))
+
+
+def sh(args: List[str], timeout: int = 5) -> str:
     try:
         out = subprocess.check_output(args, stderr=subprocess.STDOUT, timeout=timeout)
         return out.decode("utf-8", "replace").strip()
@@ -60,7 +66,7 @@ def cpu_temperature_c() -> Optional[float]:
     base = "/sys/class/thermal"
     hottest = None
     try:
-        for root, dirs, files in os.walk(base):
+        for root, _, files in os.walk(base):
             if os.path.basename(root).startswith("thermal_zone") and "type" in files:
                 try:
                     typ = open(os.path.join(root, "type")).read().strip().lower()
@@ -83,21 +89,21 @@ def cpu_temperature_c() -> Optional[float]:
     return round(hottest, 1) if hottest is not None else None
 
 
-def storage_info(path: str = None) -> Dict[str, Any]:
+def storage_info(path: Optional[str] = None) -> Dict[str, Any]:
     if not path:
         path = HOME or "/"
     try:
         s = os.statvfs(path)
         bsize = s.f_frsize or s.f_bsize or 4096
         total = int(bsize * s.f_blocks)
-        free  = int(bsize * s.f_bavail)
-        used  = max(0, total - free)
+        free = int(bsize * s.f_bavail)
+        used = max(0, total - free)
         pu = (used / total) * 100.0 if total > 0 else 0.0
         return {
             "path": path,
             "total_bytes": total,
-            "free_bytes":  free,
-            "used_bytes":  used,
+            "free_bytes": free,
+            "used_bytes": used,
             "percent_used": round(pu, 1),
         }
     except Exception as e:
@@ -117,7 +123,14 @@ def wifi_ssid() -> Optional[str]:
 
 
 def hotspot_likely_on() -> Optional[bool]:
-    out = sh(["dumpsys", "tethering"], timeout=4) or sh(["dumpsys", "connectivity", "tethering"], timeout=4)
+    out = sh(["dumpsys", "tethering"], timeout=4) or sh(
+        [
+            "dumpsys",
+            "connectivity",
+            "tethering",
+        ],
+        timeout=4,
+    )
     if not out:
         return None
     l = out.lower()
@@ -125,80 +138,119 @@ def hotspot_likely_on() -> Optional[bool]:
     return any(h in l for h in hints)
 
 
-def insert_row(payload: Dict[str, Any]) -> None:
-    url = f"{SUPABASE_URL}/rest/v1/{TABLE}"
-    print("Payload send to Supabase: ", payload)
-    r = requests.post(url, headers={**HEADERS, "Content-Type": "application/json", "Prefer": "return=minimal"}, json=payload)
-    r.raise_for_status()
+def tmux_sessions() -> Dict[str, Any]:
+    out = sh(["tmux", "ls"], timeout=3)
+    if not out:
+        return {"running": False, "sessions": []}
+    sessions = []
+    for line in out.splitlines():
+        if ":" in line:
+            sessions.append(line.split(":", 1)[0].strip())
+    return {"running": len(sessions) > 0, "sessions": sessions}
 
 
-def main() -> None:
-    bat = termux_battery()
-    pct = bat.get("percentage", bat.get("percent"))
+def collect_health() -> Dict[str, Any]:
+    errors: List[str] = []
+
+    battery = termux_battery()
+    pct = battery.get("percentage", battery.get("percent"))
     try:
         percentage = None if pct is None else max(0, min(100, int(round(float(pct)))))
     except Exception:
         percentage = None
+        errors.append("battery_percent_unavailable")
 
-    plugged = str(bat.get("plugged", "")).upper()
-    charging = bat.get("charging")
+    plugged = str(battery.get("plugged", "")).upper()
+    charging = battery.get("charging")
     if charging is None:
         charging = plugged != "" and plugged != "UNPLUGGED"
 
-    temperature_c = bat.get("temperature", bat.get("temp_c"))
+    temperature_c = battery.get("temperature", battery.get("temp_c"))
     try:
-        temperature_c = None if temperature_c is None else round(float(temperature_c), 1)
+        battery_temp_c = (
+            None if temperature_c is None else round(float(temperature_c), 1)
+        )
     except Exception:
-        temperature_c = None
+        battery_temp_c = None
+        errors.append("battery_temp_unavailable")
 
     cpu_p = cpu_percent()
     cpu_t = cpu_temperature_c()
-    st    = storage_info()
-    ssid  = wifi_ssid()
-    hot   = hotspot_likely_on()
+    if cpu_t is None:
+        errors.append("cpu_temp_unavailable")
 
-    metrics = {
-        "device_id": Env.DEVICE_ID,
-        "ts": Helper.current_time(),
-        "battery": bat,
+    st = storage_info()
+    ssid = wifi_ssid()
+    hot = hotspot_likely_on()
+    tmux = tmux_sessions()
+
+    temps_ok = True
+    if cpu_t is not None and cpu_t >= MAX_CPU_TEMP_C:
+        temps_ok = False
+    if battery_temp_c is not None and battery_temp_c >= MAX_BATTERY_TEMP_C:
+        temps_ok = False
+
+    storage_ok = True
+    percent_used = st.get("percent_used")
+    if isinstance(percent_used, (int, float)) and percent_used >= MAX_STORAGE_PERCENT:
+        storage_ok = False
+
+    healthy = temps_ok and storage_ok and not errors
+
+    return {
+        "healthy": healthy,
+        "checks": {
+            "temps_ok": temps_ok,
+            "storage_ok": storage_ok,
+            "tmux_running": tmux.get("running", False),
+        },
+        "temps": {
+            "battery_c": battery_temp_c,
+            "cpu_c": cpu_t,
+        },
+        "battery": {
+            "percentage": percentage,
+            "charging": charging,
+            "plugged": plugged,
+        },
         "cpu": {"percent": cpu_p},
-        "temps": {"battery_c": temperature_c, "cpu_c": cpu_t},
         "storage": st,
         "net": {"ssid": ssid, "hotspot_on": hot},
+        "tmux": tmux,
+        "errors": errors,
+        "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
 
-    row = {
-        "device_id": Env.DEVICE_ID,
-        "ts": metrics["ts"],
-        "percentage": percentage,
-        "charging": charging,
-        "temperature_c": temperature_c,
-        "image_url": None,
-        "cpu_percent": cpu_p,
-        "cpu_temperature_c": cpu_t,
-        "storage_total_bytes": st.get("total_bytes"),
-        "storage_free_bytes":  st.get("free_bytes"),
-        "storage_used_bytes":  st.get("used_bytes"),
-        "storage_percent_used": st.get("percent_used"),
-        "ssid": ssid,
-        "hotspot_on": hot,
-        "metrics": metrics,
-        "errors": [],
-    }
 
-    insert_row(row)
-    print(json.dumps({"event": "metrics_uploaded", "ts": metrics["ts"]}))
+class HealthHandler(BaseHTTPRequestHandler):
+    def _send_json(self, status: int, payload: Dict[str, Any]) -> None:
+        body = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode(
+            "utf-8"
+        )
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def do_GET(self) -> None:
+        if self.path.rstrip("/") == "" or self.path.rstrip("/") == "/health":
+            payload = collect_health()
+            status = 200 if payload.get("healthy") else 503
+            self._send_json(status, payload)
+            return
+        self._send_json(404, {"error": "not_found", "path": self.path})
+
+    def log_message(self, format: str, *args: Any) -> None:
+        return
+
+
+def main() -> None:
+    server = HTTPServer((HOST, PORT), HealthHandler)
+    print(json.dumps({"event": "health_server_started", "host": HOST, "port": PORT}))
+    server.serve_forever()
 
 
 if __name__ == "__main__":
-    while True:
-        try:
-            main()
-        except Exception as e:
-            # Best-effort logging to stdout
-            try:
-                print(json.dumps({"event": "metrics_error", "error": str(e), "ts": Helper.current_time()}))
-            except Exception:
-                pass
-        time.sleep(900)  # 15 minutes
-
+    main()
