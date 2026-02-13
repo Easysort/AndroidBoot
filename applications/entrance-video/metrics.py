@@ -195,14 +195,15 @@ def collect_health() -> Dict[str, Any]:
     if isinstance(percent_used, (int, float)) and percent_used >= MAX_STORAGE_PERCENT:
         storage_ok = False
 
-    healthy = temps_ok and storage_ok and not errors
+    tmux_running = tmux.get("running", False)
+    healthy = tmux_running or (temps_ok and storage_ok and not errors)
 
     return {
         "healthy": healthy,
         "checks": {
             "temps_ok": temps_ok,
             "storage_ok": storage_ok,
-            "tmux_running": tmux.get("running", False),
+            "tmux_running": tmux_running,
         },
         "temps": {
             "battery_c": battery_temp_c,
