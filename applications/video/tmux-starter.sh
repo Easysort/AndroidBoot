@@ -30,5 +30,9 @@ if ! tmux has-session -t watchdog 2>/dev/null; then
   tmux new-session -d -s watchdog "while :; do ../../watchdog.sh >>'$LOG_DIR/watchdog.log' 2>&1; echo 'watchdog exited, restarting in 5s' >>'$LOG_DIR/watchdog.log'; sleep 5; done"
 fi
 
+if ! tmux has-session -t metrics 2>/dev/null; then
+  tmux new-session -d -s metrics "while :; do python metrics.py >>'$LOG_DIR/metrics-api.log' 2>&1; echo 'metrics-api crashed, restarting in 2s' >>'$LOG_DIR/metrics-api.log'; sleep 2; done"
+fi
+
 echo "tmux sessions running:"
 tmux ls
