@@ -30,7 +30,7 @@ def sh(args: List[str], timeout: int = 5) -> str:
 
 def termux_battery() -> Dict[str, Any]:
     try:
-        out = sh(["termux-battery-status"], timeout=4)
+        out = sh(["termux-battery-status"], timeout=10)
         return json.loads(out) if out else {}
     except Exception:
         return {}
