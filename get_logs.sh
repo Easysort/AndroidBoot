@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Quickly dump the latest logs from all services.
+# Dump the latest logs from all services for quick debugging.
 set -eu
 
 cd "$(dirname "$0")"
@@ -20,6 +20,22 @@ tail_if_exists() {
   fi
 }
 
+# --- Tmux sessions (are things even running?) ---
+section "Tmux sessions"
+tmux ls 2>/dev/null || echo "(no tmux sessions)"
+
+# --- Uploader (Supabase uploads) ---
+section "Uploader  ($LOG_DIR/uploader.log)"
+tail_if_exists "$LOG_DIR/uploader.log"
+
+# --- Capture (camera) ---
+section "Capture  ($LOG_DIR/capture.log)"
+tail_if_exists "$LOG_DIR/capture.log"
+
+# --- Metrics API ---
+section "Metrics API  ($LOG_DIR/metrics-api.log)"
+tail_if_exists "$LOG_DIR/metrics-api.log"
+
 # --- Watchdog ---
 section "Watchdog  ($LOG_DIR/watchdog.log)"
 tail_if_exists "$LOG_DIR/watchdog.log"
@@ -29,7 +45,6 @@ section "Errors  ($ERROR_DIR)"
 if [ -d "$ERROR_DIR" ]; then
   count=$(find "$ERROR_DIR" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l)
   echo "$count unsent error(s)"
-  # Show the 10 most recent
   find "$ERROR_DIR" -maxdepth 1 -name '*.json' -print0 2>/dev/null \
     | xargs -0 ls -1t 2>/dev/null \
     | head -10 \
@@ -50,10 +65,10 @@ SSHD_LOG="/data/data/com.termux/files/home/.ssh/sshd-magisk.log"
 section "SSHD Magisk  ($SSHD_LOG)"
 tail_if_exists "$SSHD_LOG"
 
-# --- Logcat (last few minutes, errors/warnings only) ---
+# --- Logcat (recent errors/warnings) ---
 section "Logcat  (recent errors & warnings)"
 logcat -d -t "$TAIL_LINES" '*:W' 2>/dev/null || echo "(logcat not available)"
 
-# --- dmesg (kernel, last lines — needs root) ---
+# --- dmesg (kernel — needs root) ---
 section "dmesg  (kernel, last $TAIL_LINES lines)"
 su -c "dmesg | tail -n $TAIL_LINES" 2>/dev/null || echo "(dmesg not available)"
