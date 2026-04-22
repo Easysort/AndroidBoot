@@ -2,3 +2,4 @@
 monitor.py
 .env.main
 .env.support
+.env.full
