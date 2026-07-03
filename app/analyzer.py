@@ -15,14 +15,14 @@ from PIL import Image
 from dotenv import load_dotenv
 
 
-# Config and directories
-load_dotenv()
+BASE_DIR = pathlib.Path(__file__).resolve().parent
+REPO_DIR = pathlib.Path(os.environ.get("REPO_DIR", BASE_DIR.parent)).resolve()
+load_dotenv(REPO_DIR / ".env")
 
 TMPDIR = os.path.expanduser("~/tmp")
 os.makedirs(TMPDIR, exist_ok=True)
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-RUN_DIR = os.path.join(BASE_DIR, "run")
+RUN_DIR = os.path.join(str(REPO_DIR), "run")
 IMAGES_DIR = os.path.join(RUN_DIR, "images")
 VIDEOS_DIR = os.path.join(RUN_DIR, "videos")
 os.makedirs(IMAGES_DIR, exist_ok=True)
@@ -35,9 +35,9 @@ HEADERS = {"Authorization": f"Bearer {SUPABASE_KEY}", "apikey": SUPABASE_KEY} if
 ARGO_BUCKET = "argo"
 
 # Device ID
-ID_FILE = "../../device_id.txt"
-if os.path.exists(ID_FILE):
-    DEVICE_ID = open(ID_FILE).read().strip()
+ID_FILE = REPO_DIR / "device_id.txt"
+if ID_FILE.exists():
+    DEVICE_ID = ID_FILE.read_text().strip()
 else:
     DEVICE_ID = "unknown-device"
 

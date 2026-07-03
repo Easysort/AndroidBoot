@@ -2,6 +2,7 @@ import json
 import os
 import pathlib
 import subprocess
+import threading
 import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -18,6 +19,12 @@ PORT = int(os.environ.get("HEALTH_PORT", "5000"))
 MAX_CPU_TEMP_C = float(os.environ.get("MAX_CPU_TEMP_C", "85"))
 MAX_BATTERY_TEMP_C = float(os.environ.get("MAX_BATTERY_TEMP_C", "50"))
 MAX_STORAGE_PERCENT = float(os.environ.get("MAX_STORAGE_PERCENT", "95"))
+
+STATE_DIR = os.environ.get("STATE_DIR", os.path.join(HOME, ".local/state/androidboot"))
+LOG_DIR = os.environ.get("LOG_DIR", os.path.join(STATE_DIR, "logs"))
+BLACKBOX_LOG = os.path.join(LOG_DIR, "blackbox.log")
+BLACKBOX_INTERVAL_S = int(os.environ.get("BLACKBOX_INTERVAL_S", "300"))
+BLACKBOX_MAX_BYTES = int(os.environ.get("BLACKBOX_MAX_BYTES", str(2 * 1024 * 1024)))
 
 
 def sh(args: List[str], timeout: int = 5) -> str:
@@ -149,6 +156,66 @@ def tmux_sessions() -> Dict[str, Any]:
     return {"running": len(sessions) > 0, "sessions": sessions}
 
 
+def rotate_blackbox_if_needed() -> None:
+    try:
+        if (
+            os.path.isfile(BLACKBOX_LOG)
+            and os.path.getsize(BLACKBOX_LOG) > BLACKBOX_MAX_BYTES
+        ):
+            rotated = BLACKBOX_LOG + ".1"
+            if os.path.isfile(rotated):
+                os.remove(rotated)
+            os.rename(BLACKBOX_LOG, rotated)
+    except Exception:
+        pass
+
+
+def append_blackbox_line() -> None:
+    pathlib.Path(LOG_DIR).mkdir(parents=True, exist_ok=True)
+    rotate_blackbox_if_needed()
+
+    battery = termux_battery()
+    pct = battery.get("percentage", battery.get("percent"))
+    try:
+        battery_pct = "" if pct is None else str(int(round(float(pct))))
+    except Exception:
+        battery_pct = ""
+
+    temperature_c = battery.get("temperature", battery.get("temp_c"))
+    try:
+        battery_temp = "" if temperature_c is None else str(round(float(temperature_c), 1))
+    except Exception:
+        battery_temp = ""
+
+    cpu_t = cpu_temperature_c()
+    cpu_temp = "" if cpu_t is None else str(cpu_t)
+
+    plugged = str(battery.get("plugged", "")).upper()
+    charging = battery.get("charging")
+    if charging is None:
+        charging = plugged != "" and plugged != "UNPLUGGED"
+    charging_s = "1" if charging else "0"
+
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    line = f"{ts},{battery_temp},{cpu_temp},{battery_pct},{charging_s}\n"
+    with open(BLACKBOX_LOG, "a", encoding="utf-8") as f:
+        f.write(line)
+
+
+def blackbox_loop() -> None:
+    while True:
+        try:
+            append_blackbox_line()
+        except Exception:
+            pass
+        time.sleep(BLACKBOX_INTERVAL_S)
+
+
+def start_blackbox_logger() -> None:
+    t = threading.Thread(target=blackbox_loop, name="blackbox", daemon=True)
+    t.start()
+
+
 def collect_health() -> Dict[str, Any]:
     errors: List[str] = []
 
@@ -248,6 +315,7 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    start_blackbox_logger()
     server = HTTPServer((HOST, PORT), HealthHandler)
     print(json.dumps({"event": "health_server_started", "host": HOST, "port": PORT}))
     server.serve_forever()

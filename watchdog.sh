@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Keeps (every minute): hotspot (main) OR connected Wi-Fi (support), sshd, tailscale.
+# Plan 01: keep network-role assertions only; plans 02/03 take over sshd/tailscaled ownership.
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -13,50 +13,6 @@ jerr()  { # type, reason
   f="$ERROR_DIR/${ts//:/-}_$1.json"
   printf '{"ts":"%s","type":"%s","reason":%s}\n' "$ts" "$1" "$(jq -Rn --arg s "$2" '$s')" > "$f"
   log "ERROR [$1] $2"
-}
-
-has_cmd(){ command -v "$1" >/dev/null 2>&1 ; }
-
-ensure_sshd() {
-  if ! pgrep -x sshd >/dev/null 2>&1; then
-    log "Starting sshd..."
-    # Use the same config as the Magisk service to ensure consistent behavior
-    PREFIX="/data/data/com.termux/files/usr"
-    HOME="/data/data/com.termux/files/home"
-    nohup "$PREFIX/bin/sshd" -f "$PREFIX/etc/ssh/sshd_config" >/dev/null 2>&1 || true
-    sleep 1
-    if ! pgrep -x sshd >/dev/null 2>&1; then
-      jerr "sshd" "failed to start sshd"
-    else
-      log "sshd OK"
-    fi
-  fi
-}
-
-ensure_tailscale() {
-  # prefer userspace net if no magisk tun; requires root for tailscaled best results
-  if ! pgrep -x tailscaled >/dev/null 2>&1; then
-    log "Starting tailscaled..."
-    # try root
-    if has_cmd su; then
-      su -c "nohup tailscaled --tun=autoselect </dev/null >/dev/null 2>&1 &"
-      sleep 1
-    else
-      nohup tailscaled --tun=userspace-networking </dev/null >/dev/null 2>&1 &
-      sleep 1
-    fi
-  fi
-  # Bring TS up if not logged in
-  if tailscale status >/dev/null 2>&1; then
-    :
-  else
-    if [ -n "${TS_AUTHKEY:-}" ]; then
-      log "tailscale up with authkey"
-      tailscale up --authkey "$TS_AUTHKEY" $TS_ARGS || jerr "tailscale" "tailscale up failed"
-    else
-      jerr "tailscale" "not logged in and no TS_AUTHKEY provided"
-    fi
-  fi
 }
 
 # ---- Hotspot (main) or Wi-Fi (support) ----
@@ -144,8 +100,6 @@ log "Watchdog start role=${ROLE} every ${CHECK_INTERVAL}s"
 termux-wake-lock || true
 
 while :; do
-  ensure_sshd
-  ensure_tailscale
   ensure_network_role
   sleep "$CHECK_INTERVAL"
 done

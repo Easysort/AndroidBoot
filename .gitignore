@@ -3,3 +3,8 @@ monitor.py
 .env.main
 .env.support
 .env.full
+.ruff_cache/
+*.img
+*.tgz
+run/
+test.jpg
