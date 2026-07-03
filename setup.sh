@@ -17,13 +17,22 @@ prompt_value() {
   printf -v "$out_var" '%s' "$value"
 }
 
+# Keep package installs non-interactive. Some Termux postinst scripts
+# (e.g. dpkg-perl) run cpan on first install, which otherwise blocks on
+# an interactive configuration dialog.
+export DEBIAN_FRONTEND=noninteractive
+export PERL_MM_USE_DEFAULT=1
+
 pkg up -y
-pkg i -y tmux openssh python jq curl tsu procps termux-api git coreutils inetutils vim expect
+pkg i -y tmux openssh python python-pip jq curl tsu procps termux-api git coreutils inetutils vim expect
 pkg i -y x11-repo
 pkg i -y dbus qt6-qtbase
-pkg i -y opencv-python python-numpy ffmpeg findutils
-pip install --upgrade pip
-pip install requests python-dotenv pillow
+pkg i -y opencv-python python-numpy python-pillow ffmpeg findutils
+# Never `pip install --upgrade pip` on Termux: their pip is patched and
+# self-upgrade is forbidden (it would break the python-pip package).
+# Compiled deps (numpy, pillow, opencv) come from pkg above; pip is only
+# used for pure-Python packages.
+pip install requests python-dotenv
 
 termux-setup-storage || true
 termux-wake-lock || true
