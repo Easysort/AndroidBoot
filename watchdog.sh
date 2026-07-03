@@ -7,7 +7,10 @@ source "./.env"
 
 mkdir -p "$STATE_DIR" "$LOG_DIR" "$ERROR_DIR" "$SENT_ERROR_DIR" "$TMPDIR"
 
-log()   { printf '%s %s\n' "$(date -Is)" "$*" | tee -a "$LOG_DIR/watchdog.log" ; }
+# Print to stdout only; start.sh redirects this into $LOG_DIR/watchdog.log.
+# (Using tee here as well would double every line, since stdout is already
+# redirected to the same file by the tmux wrapper in start.sh.)
+log()   { printf '%s %s\n' "$(date -Is)" "$*" ; }
 jerr()  { # type, reason
   ts="$(date -Is)"
   f="$ERROR_DIR/${ts//:/-}_$1.json"
