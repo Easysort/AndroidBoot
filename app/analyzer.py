@@ -5,6 +5,7 @@ import time
 import shutil
 import requests
 import pathlib
+import threading
 import subprocess
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor
@@ -49,6 +50,13 @@ def sanitize_key_component(s: str) -> str:
 
 # Capture and encoding parameters (env-tunable)
 CAPTURE_INTERVAL_S = float(os.getenv("CAPTURE_INTERVAL_S", "1"))
+# One termux-camera-photo call takes ~4-7s (open camera, focus, capture, close),
+# so ~1 fps is only achievable by overlapping captures.
+CAPTURE_WORKERS = int(os.getenv("CAPTURE_WORKERS", "4"))
+# A segment is only finalized this long after it ends, so every in-flight
+# capture (10s subprocess timeout + compression) has landed in its dir first.
+FINALIZE_GRACE_S = float(os.getenv("FINALIZE_GRACE_S", "30"))
+SEGMENT_S = 15 * 60
 JPEG_TARGET_KB = int(os.getenv("JPEG_TARGET_KB", "100"))
 JPEG_MAX_DIM = int(os.getenv("JPEG_MAX_DIM", "1280")) if os.getenv("JPEG_MAX_DIM") else None
 JPEG_PROGRESSIVE = os.getenv("JPEG_PROGRESSIVE", "1") != "0"
@@ -146,10 +154,13 @@ def segment_dir(seg_id: str) -> str:
     return d
 
 
-def capture_one(camera_id: str, dest_dir: str) -> str | None:
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+def capture_one(camera_id: str) -> str | None:
+    # Route the photo into the segment matching its own capture time, so a
+    # slow capture can never land in a directory the finalizer already handled.
+    now = datetime.now(timezone.utc)
+    ts = now.strftime("%Y%m%dT%H%M%S%fZ")
     raw_path = os.path.join(TMPDIR, f"photo_{ts}_raw.jpg")
-    out_path = os.path.join(dest_dir, f"photo_{ts}.jpg")
+    out_path = os.path.join(segment_dir(segment_id_from_dt(now)), f"photo_{ts}.jpg")
     try:
         subprocess.run(
             ["termux-camera-photo", "-c", str(camera_id), raw_path],
@@ -275,58 +286,68 @@ def finalize_and_upload_segment(seg_id: str) -> None:
         pass
 
 
-def finalize_orphan_segments(current_seg: str, encoder: ThreadPoolExecutor) -> None:
-    """Upload segments stranded by a crash/reboot: any segment dir that is not
-    the one currently being captured would otherwise sit on disk forever, since
-    the main loop only finalizes the segment it just finished."""
+def sweep_finalizable(encoder: ThreadPoolExecutor, submitted: set) -> None:
+    """Finalize every segment whose window ended more than FINALIZE_GRACE_S
+    ago. Because captures route photos by their own timestamp, once the grace
+    period has passed no new file can appear in such a dir. This also picks up
+    segments stranded by a crash or reboot."""
     try:
         names = sorted(os.listdir(IMAGES_DIR))
     except Exception as e:
-        log_event("orphan_scan_error", error=str(e))
+        log_event("segment_scan_error", error=str(e))
         return
+    now = datetime.now(timezone.utc)
     for name in names:
-        if name == current_seg or not os.path.isdir(os.path.join(IMAGES_DIR, name)):
+        if name in submitted or not os.path.isdir(os.path.join(IMAGES_DIR, name)):
             continue
         try:
-            datetime.strptime(name, "%Y%m%dT%H%M%SZ")
+            seg_start = datetime.strptime(name, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
         except ValueError:
             continue
-        log_event("orphan_segment_recovered", segment=name)
-        encoder.submit(finalize_and_upload_segment, name)
+        if now >= seg_start + timedelta(seconds=SEGMENT_S + FINALIZE_GRACE_S):
+            submitted.add(name)
+            encoder.submit(finalize_and_upload_segment, name)
 
 
 def main():
-    current_seg = segment_id_from_dt(datetime.now(timezone.utc))
-    seg_dir = segment_dir(current_seg)
     encoder = ThreadPoolExecutor(max_workers=1)
-    next_capture = time.time()
+    capture_pool = ThreadPoolExecutor(max_workers=CAPTURE_WORKERS)
+    submitted_segments: set = set()
 
-    finalize_orphan_segments(current_seg, encoder)
+    # Overlapping captures are required for ~1 fps (each call takes ~4-7s), but
+    # the camera can't keep up indefinitely, so cap the number in flight rather
+    # than letting a backlog of minutes-late captures build up.
+    inflight = 0
+    inflight_lock = threading.Lock()
+    max_inflight = CAPTURE_WORKERS
+
+    def capture_task():
+        nonlocal inflight
+        try:
+            capture_one(CAMERA_ID)
+        finally:
+            with inflight_lock:
+                inflight -= 1
+
+    next_capture = time.time()
+    last_sweep = 0.0
 
     while True:
-        # finalize previous segment on boundary
-        now = datetime.now(timezone.utc)
-        seg_now = segment_id_from_dt(now)
-        if seg_now != current_seg:
-            prev = current_seg
-            encoder.submit(finalize_and_upload_segment, prev)
-            current_seg = seg_now
-            seg_dir = segment_dir(current_seg)
-
-        # Capture synchronously. The camera is a single hardware resource, so
-        # capturing in parallel only causes contention/corrupt frames. Serial
-        # capture also bounds the rate to what the hardware can actually do,
-        # which prevents an unbounded backlog of tasks that would otherwise run
-        # minutes late and write into a segment dir the finalizer already
-        # uploaded and deleted (the "No such file or directory" errors).
         t = time.time()
+
         if t >= next_capture:
-            capture_one(CAMERA_ID, seg_dir)
-            # Advance on the target cadence, but never build up a burst to
-            # "catch up" if a capture ran long.
-            next_capture = max(next_capture + CAPTURE_INTERVAL_S, time.time())
-        else:
-            time.sleep(min(0.05, next_capture - t))
+            with inflight_lock:
+                if inflight < max_inflight:
+                    inflight += 1
+                    capture_pool.submit(capture_task)
+                # else: camera saturated; skip this tick instead of queueing.
+            next_capture = max(next_capture + CAPTURE_INTERVAL_S, t)
+
+        if t - last_sweep >= 5.0:
+            sweep_finalizable(encoder, submitted_segments)
+            last_sweep = t
+
+        time.sleep(0.05)
 
 
 if __name__ == "__main__":
