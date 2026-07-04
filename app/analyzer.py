@@ -170,6 +170,7 @@ def capture_one(camera_id: str, dest_dir: str) -> str | None:
                 target_kb=JPEG_TARGET_KB,
                 progressive=JPEG_PROGRESSIVE,
             )
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
         with open(out_path, "wb") as f:
             f.write(data)
         return out_path
@@ -278,8 +279,7 @@ def main():
     current_seg = segment_id_from_dt(datetime.now(timezone.utc))
     seg_dir = segment_dir(current_seg)
     encoder = ThreadPoolExecutor(max_workers=1)
-    capture_pool = ThreadPoolExecutor(max_workers=4)
-    last_submit = 0.0
+    next_capture = time.time()
 
     while True:
         # finalize previous segment on boundary
@@ -291,12 +291,20 @@ def main():
             current_seg = seg_now
             seg_dir = segment_dir(current_seg)
 
+        # Capture synchronously. The camera is a single hardware resource, so
+        # capturing in parallel only causes contention/corrupt frames. Serial
+        # capture also bounds the rate to what the hardware can actually do,
+        # which prevents an unbounded backlog of tasks that would otherwise run
+        # minutes late and write into a segment dir the finalizer already
+        # uploaded and deleted (the "No such file or directory" errors).
         t = time.time()
-        if t - last_submit >= CAPTURE_INTERVAL_S:
-            capture_pool.submit(capture_one, CAMERA_ID, seg_dir)
-            last_submit = t
-
-        time.sleep(0.05)
+        if t >= next_capture:
+            capture_one(CAMERA_ID, seg_dir)
+            # Advance on the target cadence, but never build up a burst to
+            # "catch up" if a capture ran long.
+            next_capture = max(next_capture + CAPTURE_INTERVAL_S, time.time())
+        else:
+            time.sleep(min(0.05, next_capture - t))
 
 
 if __name__ == "__main__":

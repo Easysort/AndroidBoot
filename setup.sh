@@ -50,11 +50,18 @@ fi
 
 # termux-camera-photo needs CAMERA on the Termux:API app. Without it the
 # command still exits 0 but writes an empty file, so grant it here via root
-# instead of relying on the manual settings step.
-su -c 'pm grant com.termux.api android.permission.CAMERA; pm grant com.termux android.permission.CAMERA' || {
-  echo "WARN: Could not auto-grant camera permission (no root?)."
+# instead of relying on the manual settings step. Run each grant as its own
+# single-command `su -c` invocation: chaining both in one `su -c '...; ...'`
+# can fail with "Failure calling service package: Failed transaction".
+if su -c 'pm grant com.termux.api android.permission.CAMERA' 2>/dev/null; then
+  echo "Granted CAMERA to com.termux.api."
+else
+  echo "WARN: Could not auto-grant camera permission to com.termux.api."
   echo "Grant it manually: Android Settings -> Apps -> Termux:API -> Permissions -> Camera -> Allow"
-}
+fi
+# com.termux itself does not strictly need CAMERA, but grant it if the app
+# declares it; ignore failures (it may not be a requested permission).
+su -c 'pm grant com.termux android.permission.CAMERA' 2>/dev/null || true
 
 current_device_id="$(cat "$REPO_DIR/device_id.txt" 2>/dev/null || true)"
 prompt_value "DEVICE_ID (example: Argo-roskilde-01-03)" "${current_device_id:-device-unknown}" DEVICE_ID
@@ -96,9 +103,17 @@ while IFS= read -r line || [ -n "$line" ]; do
   fi
 done < "$OPS_KEYS"
 
-chmod +x "$REPO_DIR/start.sh" "$REPO_DIR/stop.sh" "$REPO_DIR/setup.sh" "$REPO_DIR/ops.sh" "$REPO_DIR/watchdog.sh" \
-         "$REPO_DIR/app/keepwarm.sh" \
-         "$REPO_DIR/boot/service.d-androidboot.sh" "$REPO_DIR/boot/termux-boot.sh"
+# chmod each script only if present, so a file that is missing (e.g. not yet
+# pulled) can never abort setup via `set -e`.
+for rel in start.sh stop.sh setup.sh ops.sh watchdog.sh \
+           app/keepwarm.sh \
+           boot/service.d-androidboot.sh boot/termux-boot.sh; do
+  if [ -f "$REPO_DIR/$rel" ]; then
+    chmod +x "$REPO_DIR/$rel"
+  else
+    echo "WARN: $rel not found, skipping chmod."
+  fi
+done
 
 mkdir -p "$HOME/.termux/boot"
 cp "$REPO_DIR/boot/termux-boot.sh" "$HOME/.termux/boot/androidboot.sh"
