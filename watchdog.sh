@@ -82,20 +82,26 @@ connect_wifi() {
 }
 
 ensure_network_role() {
-  if [ "${ROLE:-support}" = "main" ]; then
-    if ! is_hotspot_on; then
-      enable_hotspot || true
-    fi
-    is_hotspot_on || jerr "hotspot" "hotspot still OFF after attempt"
-  else
-    ssid="$(wifi_ssid)"
-    if [ "$ssid" != "$MAIN_SSID" ]; then
-      connect_wifi || true
-      sleep 5
+  case "${ROLE:-none}" in
+    main)
+      if ! is_hotspot_on; then
+        enable_hotspot || true
+      fi
+      is_hotspot_on || jerr "hotspot" "hotspot still OFF after attempt"
+      ;;
+    support)
       ssid="$(wifi_ssid)"
-      [ "$ssid" = "$MAIN_SSID" ] || jerr "wifi" "not connected to $MAIN_SSID (got: ${ssid:-none})"
-    fi
-  fi
+      if [ "$ssid" != "$MAIN_SSID" ]; then
+        connect_wifi || true
+        sleep 5
+        ssid="$(wifi_ssid)"
+        [ "$ssid" = "$MAIN_SSID" ] || jerr "wifi" "not connected to $MAIN_SSID (got: ${ssid:-none})"
+      fi
+      ;;
+    *)
+      # ROLE=none: every phone has its own 4G connection; nothing to manage.
+      ;;
+  esac
 }
 
 # ---- main loop ----

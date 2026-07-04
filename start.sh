@@ -68,13 +68,15 @@ start_session() {
 for session in metrics analyzer watchdog keepwarm; do
   case "$session" in
     metrics)
-      cmd="python app/metrics.py"
+      # -u: unbuffered stdout, so log lines appear immediately instead of
+      # sitting in Python's block buffer until the process exits.
+      cmd="python -u app/metrics.py"
       log_file="$LOG_DIR/metrics-api.log"
       crash_note="metrics crashed, restarting in 2s"
       sleep_s="2"
       ;;
     analyzer)
-      cmd="python app/analyzer.py"
+      cmd="python -u app/analyzer.py"
       log_file="$LOG_DIR/uploader.log"
       crash_note="analyzer crashed, restarting in 5s"
       sleep_s="5"

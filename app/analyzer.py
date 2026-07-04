@@ -275,11 +275,33 @@ def finalize_and_upload_segment(seg_id: str) -> None:
         pass
 
 
+def finalize_orphan_segments(current_seg: str, encoder: ThreadPoolExecutor) -> None:
+    """Upload segments stranded by a crash/reboot: any segment dir that is not
+    the one currently being captured would otherwise sit on disk forever, since
+    the main loop only finalizes the segment it just finished."""
+    try:
+        names = sorted(os.listdir(IMAGES_DIR))
+    except Exception as e:
+        log_event("orphan_scan_error", error=str(e))
+        return
+    for name in names:
+        if name == current_seg or not os.path.isdir(os.path.join(IMAGES_DIR, name)):
+            continue
+        try:
+            datetime.strptime(name, "%Y%m%dT%H%M%SZ")
+        except ValueError:
+            continue
+        log_event("orphan_segment_recovered", segment=name)
+        encoder.submit(finalize_and_upload_segment, name)
+
+
 def main():
     current_seg = segment_id_from_dt(datetime.now(timezone.utc))
     seg_dir = segment_dir(current_seg)
     encoder = ThreadPoolExecutor(max_workers=1)
     next_capture = time.time()
+
+    finalize_orphan_segments(current_seg, encoder)
 
     while True:
         # finalize previous segment on boundary
